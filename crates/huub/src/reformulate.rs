@@ -1,7 +1,11 @@
 //! Data structures to store [`Model`] parts for analyses and for the
 //! reformulation process of creating a [`Solver`] object from a [`Model`].
 
+<<<<<<< Updated upstream
 use std::{collections::HashSet, path::PathBuf};
+=======
+use std::{collections::HashSet, fs::File, path::PathBuf};
+>>>>>>> Stashed changes
 
 use delegate::delegate;
 use index_vec::{define_index_type, IndexVec};

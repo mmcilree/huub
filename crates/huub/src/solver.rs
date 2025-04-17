@@ -10,6 +10,7 @@ pub(crate) mod trail;
 
 use std::{
 	fmt::{self, Debug, Display, Formatter},
+	fs::File,
 	hash::Hash,
 	num::NonZeroI32,
 	ops::{Add, AddAssign, Deref, Mul, Neg, Not},

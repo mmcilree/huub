@@ -305,6 +305,7 @@ dependencies = [
  "flatzinc-serde",
  "humantime",
  "huub",
+ "huub-proofs",
  "pico-args",
  "serde_json",
  "tracing",
@@ -350,6 +351,15 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-test",
+]
+
+[[package]]
+name = "huub-proofs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

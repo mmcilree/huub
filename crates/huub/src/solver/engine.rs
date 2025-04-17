@@ -20,6 +20,7 @@ macro_rules! trace_new_lit {
 
 use std::{
 	collections::{HashMap, VecDeque},
+	fs::File,
 	mem,
 };
 

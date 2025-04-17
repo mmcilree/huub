@@ -51,6 +51,8 @@ use tracing::{subscriber::set_default, warn};
 use tracing_subscriber::fmt::MakeWriter;
 use ustr::{ustr, Ustr, UstrMap};
 
+use huub_proofs::proofbegin;
+
 use crate::trace::LitName;
 
 /// Status message to output when it is proven that no more/better solutions can
@@ -174,6 +176,7 @@ where
 		// Enable tracing functionality
 		let lit_reverse_map: Arc<Mutex<HashMap<NonZeroI32, LitName>>> = Arc::default();
 		let int_reverse_map: Arc<Mutex<Vec<Ustr>>> = Arc::default();
+
 		let subscriber = trace::create_subscriber(
 			self.verbose,
 			self.stderr.clone(),
@@ -181,9 +184,13 @@ where
 			Arc::clone(&lit_reverse_map),
 			Arc::clone(&int_reverse_map),
 		);
+
 		let _guard = set_default(subscriber);
 
 		let start = Instant::now();
+
+		proofbegin!();
+
 		let deadline = self.time_limit.map(|t| start + t);
 
 		// Parse FlatZinc JSON file
@@ -490,6 +497,7 @@ where
 				(res, slv.search_statistics())
 			}
 		};
+
 		// output solving statistics
 		if self.statistics {
 			print_statistics_block(
@@ -506,6 +514,7 @@ where
 				],
 			);
 		}
+
 		match res {
 			SolveResult::Satisfied => {}
 			SolveResult::Unsatisfiable => {
