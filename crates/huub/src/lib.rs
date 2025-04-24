@@ -1107,7 +1107,7 @@ impl Model {
 			r.set_option("vivify", config.vivification() as i32);
 
 			if config.proof_path().is_some() {
-				r.set_option("huubtracer", 2);
+				r.set_option("huubtracer", 1);
 				let proof_path = config.proof_path().unwrap();
 				let path_str = proof_path.to_str().unwrap();
 				r.enable_proof(path_str);

@@ -27,8 +27,8 @@ use std::{
 	collections::HashMap,
 	convert::Infallible,
 	fmt::{self, Debug, Display},
-	fs::File,
-	io::{self, BufReader},
+	fs::{self, File},
+	io::{self, BufReader, Write},
 	num::NonZeroI32,
 	path::PathBuf,
 	sync::{
@@ -47,6 +47,7 @@ use huub::{
 	SlvTermSignal,
 };
 use pico_args::Arguments;
+use serde_json::json;
 use tracing::{subscriber::set_default, warn};
 use tracing_subscriber::fmt::MakeWriter;
 use ustr::{ustr, Ustr, UstrMap};
@@ -142,7 +143,7 @@ fn parse_time_limit(s: &str) -> Result<Duration, humantime::DurationError> {
 }
 
 /// Print a statistics block formulated for MiniZinc
-fn print_statistics_block<W: io::Write>(stream: &mut W, name: &str, stats: &[(&str, &dyn Debug)]) {
+fn print_statistics_block<W: Write>(stream: &mut W, name: &str, stats: &[(&str, &dyn Debug)]) {
 	outputln!(stream, "%%%mzn-stat: blockType={:?}", name);
 	for stat in stats {
 		outputln!(stream, "%%%mzn-stat: {}={:?}", stat.0, stat.1);
@@ -152,7 +153,7 @@ fn print_statistics_block<W: io::Write>(stream: &mut W, name: &str, stats: &[(&s
 
 impl<Stdout, Stderr> Cli<Stdout, Stderr>
 where
-	Stdout: io::Write,
+	Stdout: Write,
 	Stderr: Clone + for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
 {
 	/// Distill the initialization configution, used to initialize the Huub
@@ -518,6 +519,39 @@ where
 				outputln!(self.stdout, "{}", FZN_COMPLETE);
 			}
 		}
+
+		if let Some(proof_path) = &self.proof_path {
+			let lit_map_guard = lit_reverse_map.lock().unwrap();
+			let int_map_guard = int_reverse_map.lock().unwrap();
+			let mut json_path = proof_path.clone();
+			let mut name = String::from(
+				proof_path
+					.file_stem()
+					.unwrap_or_default()
+					.to_str()
+					.unwrap_or_default(),
+			);
+			name.push_str("_lits");
+			json_path.set_file_name(name);
+			let _ = json_path.set_extension("json");
+			match fs::OpenOptions::new()
+				.create(true)
+				.write(true)
+				.open(json_path.as_path())
+			{
+				Ok(mut file) => {
+					let mut list = json!([]);
+					for (key, value) in lit_map_guard.iter() {
+						let record = json!({"id": key, "name": value.to_string(&int_map_guard)});
+						list.as_array_mut().unwrap().push(record);
+					}
+					let _ = write!(file, "{}", list.to_string());
+				}
+				Err(e) => {
+					println!("Error writing to JSON file {}", e.to_string());
+				}
+			}
+		}
 		Ok(())
 	}
 
@@ -552,7 +586,7 @@ where
 	}
 
 	/// Set the writer that is used for the standard (solution) output.
-	pub fn with_stdout<W: io::Write>(self, stdout: W) -> Cli<W, Stderr> {
+	pub fn with_stdout<W: Write>(self, stdout: W) -> Cli<W, Stderr> {
 		Cli {
 			stdout,
 			// Copy the rest of the fields

@@ -173,7 +173,7 @@ impl<'writer> FormatFields<'writer> for FmtLitFields {
 
 impl LitName {
 	/// Returns a string representation of the literal using the FlatZinc names.
-	fn to_string(&self, int_map: &[Ustr]) -> String {
+	pub(crate) fn to_string(&self, int_map: &[Ustr]) -> String {
 		match self {
 			LitName::BoolVar(name, pos) => {
 				format!("{}{name}", if *pos { "" } else { "not " })
