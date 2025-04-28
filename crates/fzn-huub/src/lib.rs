@@ -232,7 +232,7 @@ where
 		}
 
 		// Create reverse map for solver variables if required
-		if self.verbose > 0 {
+		if self.verbose > 0 || self.prove {
 			let mut lit_map = HashMap::new();
 			let mut int_map = vec![ustr(""); slv.init_statistics().int_vars()];
 			let mut keys: Vec<_> = var_map.keys().collect();
@@ -537,15 +537,42 @@ where
 			match fs::OpenOptions::new()
 				.create(true)
 				.write(true)
+				.truncate(true)
 				.open(json_path.as_path())
 			{
 				Ok(mut file) => {
-					let mut list = json!([]);
+					let mut lit_json = json!({});
 					for (key, value) in lit_map_guard.iter() {
-						let record = json!({"id": key, "name": value.to_string(&int_map_guard)});
-						list.as_array_mut().unwrap().push(record);
+						if key.get() < 0 {
+							continue;
+						};
+
+						let record = match value {
+							LitName::BoolVar(name, _cond) => {
+								json!({"cpvartype": "boolvar", "name": name.to_string()})
+							}
+							LitName::IntLit(index, meaning) => {
+								let var_name_str = if int_map_guard.len() > *index {
+									format!("{}", int_map_guard[*index])
+								} else {
+									format!("int_var[{}]", index) // Corrected here
+								};
+
+								let (operator, value) = match meaning {
+									IntLitMeaning::Eq(val) => ("=", val.to_string()),
+									IntLitMeaning::GreaterEq(val) => (">=", val.to_string()),
+									IntLitMeaning::Less(val) => ("<", val.to_string()),
+									IntLitMeaning::NotEq(val) => ("!=", val.to_string()),
+								};
+								json!({"cpvartype": "intvar", "type": "condition", "operator": &operator, "value": &value, "name": &var_name_str})
+							}
+						};
+						let _ = lit_json
+							.as_object_mut()
+							.unwrap()
+							.insert(String::from("x") + &key.to_string(), record);
 					}
-					let _ = write!(file, "{}", list.to_string());
+					let _ = write!(file, "{}", lit_json.to_string());
 				}
 				Err(e) => {
 					println!("Error writing to JSON file {}", e.to_string());
