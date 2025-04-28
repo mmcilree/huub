@@ -1111,6 +1111,7 @@ impl Model {
 				let proof_path = config.proof_path().unwrap();
 				let path_str = proof_path.to_str().unwrap();
 				r.enable_proof(path_str);
+				r.conclude_next(true);
 			}
 		} else {
 			warn!("unknown solver: vivification, restart (and proof logging) options are ignored");
