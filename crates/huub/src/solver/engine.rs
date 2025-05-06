@@ -27,7 +27,8 @@ use delegate::delegate;
 use index_vec::IndexVec;
 use pindakaas::{
 	solver::propagation::{
-		ClausePersistence, Propagator as PropagatorExtension, SearchDecision, SolvingActions,
+		ClausePersistence, ProofActions, Propagator as PropagatorExtension, SearchDecision,
+		SolvingActions,
 	},
 	Lit as RawLit, Var as RawVar,
 };
@@ -101,6 +102,7 @@ pub struct State {
 	pub(crate) propagation_queue: VecDeque<RawLit>,
 	/// Reasons for setting values
 	pub(crate) reason_map: HashMap<RawLit, Reason>,
+	// TODO:proof_hint make tuple
 	/// Whether conflict has (already) been detected
 	pub(crate) conflict: Option<Clause>,
 	/// Whether the solver is in a failure state.
@@ -114,10 +116,13 @@ pub struct State {
 	// ---- Non-Trailed Infrastructure ----
 	/// Storage for clauses to be communicated to the solver
 	pub(crate) clauses: VecDeque<Clause>,
+
 	/// Solving statistics
 	pub(crate) statistics: EngineStatistics,
 	/// Whether VSIDS is currently enabled
 	pub(crate) vsids: bool,
+	/// Whether proof logging is currently enabled
+	pub(crate) prove: bool,
 
 	// ---- Queueing Infrastructure ----
 	/// Boolean variable enqueueing information
@@ -142,10 +147,13 @@ pub struct State {
 impl PropagatorExtension for Engine {
 	fn add_external_clause(
 		&mut self,
-		_slv: &mut dyn SolvingActions,
+		slv: &mut dyn SolvingActions,
 	) -> Option<(Clause, ClausePersistence)> {
 		if !self.state.clauses.is_empty() {
 			let clause = self.state.clauses.pop_front(); // Known to be `Some`
+			if self.state.prove {
+				slv.add_proof_hint(" :: add_external_clause");
+			}
 			trace!(clause = ?clause.as_ref().unwrap().iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add external clause");
 			clause.map(|c| (c, ClausePersistence::Irreduntant))
 		} else if !self.state.propagation_queue.is_empty() {
@@ -158,7 +166,7 @@ impl PropagatorExtension for Engine {
 		}
 	}
 
-	fn add_reason_clause(&mut self, propagated_lit: RawLit) -> Clause {
+	fn add_reason_clause(&mut self, slv: &mut dyn ProofActions, propagated_lit: RawLit) -> Clause {
 		// Find reason
 		let reason = self.state.reason_map.remove(&propagated_lit);
 		// Restore the current state to the state when the propagation happened if explaining lazily
@@ -171,6 +179,10 @@ impl PropagatorExtension for Engine {
 		} else {
 			vec![propagated_lit]
 		};
+
+		if self.state.prove {
+			slv.add_proof_hint(" :: add_reason_clause");
+		}
 
 		debug!(clause = ?clause.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add reason clause");
 		clause
@@ -607,6 +619,11 @@ impl State {
 	pub(crate) fn set_vsids_only(&mut self, enable: bool) {
 		self.config.vsids_only = enable;
 		self.vsids = enable;
+	}
+
+	pub(crate) fn set_prove(&mut self, enable: bool) {
+		self.config.prove = enable;
+		self.prove = enable;
 	}
 }
 

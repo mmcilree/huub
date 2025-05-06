@@ -288,6 +288,7 @@ where
 			slv.set_vsids_only(self.vsids_only);
 			slv.set_toggle_vsids(self.toggle_vsids);
 			slv.set_vsids_after(self.vsids_after);
+			slv.set_prove(self.prove);
 		}
 
 		// Determine Goal and Objective

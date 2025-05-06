@@ -199,6 +199,8 @@ pub(crate) struct SolverConfiguration {
 	vsids_after: Option<u32>,
 	/// Only use the activity-based search heuristic provided by the SAT solver. Ignore the user-specific search heuristic.
 	vsids_only: bool,
+	/// Whether proof logging is enabled
+	prove: bool,
 }
 
 /// A trait for a function that can be used to evaluate a `SolverView` to a
@@ -641,6 +643,13 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 		Iter: IntoIterator,
 		Iter::Item: Into<BoolView>,
 	{
+		let (oracle, engine) = self.oracle.access_solving();
+		// ^ Is this a bad idea?
+
+		if engine.state.config.prove {
+			oracle.add_proof_hint(" :: add_clause");
+		}
+
 		Ok(pindakaas::ClauseDatabaseTools::add_clause(
 			self,
 			clause.into_iter().map(Into::into),
@@ -672,6 +681,7 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 			})
 			.collect_vec();
 		debug!(clause = ?clause.iter().filter_map(|&x| if let BoolView(BoolViewInner::Lit(x)) = x { Some(i32::from(x)) } else { None }).collect::<Vec<i32>>(), "add solution nogood");
+		// TODO: add_hint soli
 		self.add_clause(clause)
 	}
 
@@ -780,6 +790,7 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 							}),
 							"add objective bound"
 						);
+						// TODO:proof_hints add hint soli
 						self.add_clause([bound_lit.unwrap()]).unwrap();
 					}
 				}
@@ -960,6 +971,8 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 			/// Set wether the solver should make all search decisions based on the VSIDS
 			/// only.
 			pub fn set_vsids_only(&mut self, enable: bool);
+			/// Set whether proof logging is enabled
+			pub fn set_prove(&mut self, enable: bool);
 		}
 	}
 }
@@ -1027,6 +1040,9 @@ impl<Oracle: PropagatingSolver<Engine>> DecisionActions for Solver<Oracle> {
 				def.next.map(Into::into),
 			) {
 				trace!(clause = ?cl.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add clause");
+				if engine.state.config.prove {
+					oracle.add_proof_hint(" :: lazy_lit_def");
+				}
 				clauses.push(cl);
 			}
 			v
