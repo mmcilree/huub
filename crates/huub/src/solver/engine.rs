@@ -100,11 +100,13 @@ pub struct State {
 	pub(crate) trail: Trail,
 	/// Literals to be propagated by the oracle
 	pub(crate) propagation_queue: VecDeque<RawLit>,
-	/// Reasons for setting values
-	pub(crate) reason_map: HashMap<RawLit, Reason>,
-	// TODO:proof_hint make tuple
+	/// Reasons for setting values (with optional proof hints)
+	pub(crate) reason_map: HashMap<RawLit, (Reason, Option<String>)>,
 	/// Whether conflict has (already) been detected
 	pub(crate) conflict: Option<Clause>,
+	/// Optional proof hint for the conflict
+	pub(crate) conflict_proof_hint: Option<String>,
+
 	/// Whether the solver is in a failure state.
 	///
 	/// Triggered when a conflict is detected during propagation, the solver
@@ -115,8 +117,7 @@ pub struct State {
 
 	// ---- Non-Trailed Infrastructure ----
 	/// Storage for clauses to be communicated to the solver
-	pub(crate) clauses: VecDeque<Clause>,
-
+	pub(crate) clauses: VecDeque<(Clause, Option<String>)>,
 	/// Solving statistics
 	pub(crate) statistics: EngineStatistics,
 	/// Whether VSIDS is currently enabled
@@ -150,16 +151,28 @@ impl PropagatorExtension for Engine {
 		slv: &mut dyn SolvingActions,
 	) -> Option<(Clause, ClausePersistence)> {
 		if !self.state.clauses.is_empty() {
-			let clause = self.state.clauses.pop_front(); // Known to be `Some`
+			let (clause, proof_hint) = self.state.clauses.pop_front().unwrap(); // Known to be `Some`
 			if self.state.prove {
-				slv.add_proof_hint(" :: add_external_clause");
+				if let Some(proof_hint) = proof_hint {
+					slv.add_proof_hint(proof_hint.as_str());
+				} else {
+					slv.add_proof_hint(" :: unknown_external_clause");
+				}
 			}
-			trace!(clause = ?clause.as_ref().unwrap().iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add external clause");
-			clause.map(|c| (c, ClausePersistence::Irreduntant))
+			trace!(clause = ?clause.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add external clause");
+			Some((clause, ClausePersistence::Irreduntant))
 		} else if !self.state.propagation_queue.is_empty() {
 			None // Require that the solver first applies the remaining propagation
 		} else if let Some(conflict) = self.state.conflict.take() {
 			debug!(clause = ?conflict.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add conflict clause");
+			if self.state.prove {
+				if let Some(proof_hint) = self.state.conflict_proof_hint.as_ref() {
+					slv.add_proof_hint(proof_hint.as_str());
+				} else {
+					slv.add_proof_hint(" :: unknown_conflict_clause");
+				}
+				self.state.conflict_proof_hint = None;
+			}
 			Some((conflict, ClausePersistence::Forgettable))
 		} else {
 			None
@@ -168,21 +181,25 @@ impl PropagatorExtension for Engine {
 
 	fn add_reason_clause(&mut self, slv: &mut dyn ProofActions, propagated_lit: RawLit) -> Clause {
 		// Find reason
-		let reason = self.state.reason_map.remove(&propagated_lit);
+		let reason_and_hint = self.state.reason_map.remove(&propagated_lit);
 		// Restore the current state to the state when the propagation happened if explaining lazily
-		if matches!(reason, Some(Reason::Lazy(_))) {
+		if matches!(reason_and_hint, Some((Reason::Lazy(_), _))) {
 			self.state.trail.goto_assign_lit(propagated_lit);
 		}
 		// Create a clause from the reason
-		let clause = if let Some(reason) = reason {
+		let clause = if let Some((reason, proof_hint)) = reason_and_hint {
+			// Add a proof hint if we are proof logging and there is one
+			if self.state.prove {
+				if let Some(proof_hint) = proof_hint {
+					slv.add_proof_hint(proof_hint.as_str());
+				} else {
+					slv.add_proof_hint(" :: unknown_reason_clause");
+				}
+			}
 			reason.explain(&mut self.propagators, &mut self.state, Some(propagated_lit))
 		} else {
 			vec![propagated_lit]
 		};
-
-		if self.state.prove {
-			slv.add_proof_hint(" :: add_reason_clause");
-		}
 
 		debug!(clause = ?clause.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add reason clause");
 		clause
@@ -467,7 +484,7 @@ impl Engine {
 	/// (DEBUG ONLY) Check that the reason of a propagated literal contains only
 	/// known true literals
 	fn debug_check_reason(&mut self, lit: RawLit) {
-		if let Some(reason) = self.state.reason_map.get(&lit).cloned() {
+		if let Some((reason, _)) = self.state.reason_map.get(&lit).cloned() {
 			// Reason is in the form (a /\ b /\ ...), which then forms the
 			// implication (a /\ b /\ ...) -> lit
 			let clause: Clause = reason.explain(&mut self.propagators, &mut self.state, Some(lit));
@@ -586,11 +603,18 @@ impl State {
 	}
 
 	/// Register the [`Reason`] to explain why `lit` has been assigned.
-	pub(crate) fn register_reason(&mut self, lit: RawLit, built_reason: Result<Reason, bool>) {
+	pub(crate) fn register_reason(
+		&mut self,
+		lit: RawLit,
+		built_reason: Result<Reason, bool>,
+		proof_hint: Option<&str>,
+	) {
 		match built_reason {
 			Ok(reason) => {
 				// Insert new reason, possibly overwriting old one (from previous search attempt)
-				let _ = self.reason_map.insert(lit, reason);
+				let _ = self
+					.reason_map
+					.insert(lit, (reason, proof_hint.map(str::to_owned)));
 			}
 			Err(true) => {
 				// No (previous) reason required

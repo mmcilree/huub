@@ -67,6 +67,8 @@ pub struct Conflict {
 	/// The reason for the conflict
 	/// This reason must result a conjunction that implies false
 	pub(crate) reason: Reason,
+
+	pub(crate) proof_hint: Option<String>,
 }
 
 /// A trait for constraints that can be placed in a [`Model`] object.
@@ -264,14 +266,20 @@ impl Conflict {
 		actions: &mut A,
 		subject: Option<RawLit>,
 		reason: impl ReasonBuilder<A>,
+		proof_hint: Option<String>,
 	) -> Self {
 		match reason.build_reason(actions) {
-			Ok(reason) => Self { subject, reason },
+			Ok(reason) => Self {
+				subject,
+				reason,
+				proof_hint,
+			},
 			Err(true) => {
 				if let Some(subject) = subject {
 					Self {
 						subject: None,
 						reason: Reason::Simple(!subject),
+						proof_hint: proof_hint,
 					}
 				} else {
 					panic!("constructing empty conflict")
