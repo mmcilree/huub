@@ -25,7 +25,8 @@ use pindakaas::{
 		FailedAssumtions, LearnCallback, SlvTermSignal, SolveResult as SatSolveResult,
 		TermCallback,
 	},
-	BoolVal, ClauseDatabase, Cnf, Lit as RawLit, Unsatisfiable, Valuation as SatValuation,
+	BoolVal, ClauseDatabase, ClauseDatabaseTools, Cnf, Lit as RawLit, Unsatisfiable,
+	Valuation as SatValuation,
 };
 use tracing::{debug, trace};
 
@@ -637,25 +638,6 @@ where
 }
 
 impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
-	/// Add a clause to the solver
-	pub fn add_clause<Iter>(&mut self, clause: Iter) -> Result<(), ReformulationError>
-	where
-		Iter: IntoIterator,
-		Iter::Item: Into<BoolView>,
-	{
-		let (oracle, engine) = self.oracle.access_solving();
-		// ^ Is this a bad idea?
-
-		if engine.state.config.prove {
-			oracle.add_proof_hint(" :: add_clause");
-		}
-
-		Ok(pindakaas::ClauseDatabaseTools::add_clause(
-			self,
-			clause.into_iter().map(Into::into),
-		)?)
-	}
-
 	#[doc(hidden)]
 	/// Method used to add a no-good clause from a solution. This clause can be
 	/// used to ensure that the same solution is not found again.
@@ -681,8 +663,9 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 			})
 			.collect_vec();
 		debug!(clause = ?clause.iter().filter_map(|&x| if let BoolView(BoolViewInner::Lit(x)) = x { Some(i32::from(x)) } else { None }).collect::<Vec<i32>>(), "add solution nogood");
-		// TODO: add_hint soli
+		// TODO: add_hint sol
 		self.add_clause(clause)
+			.map_err(|_| ReformulationError::TrivialUnsatisfiable)
 	}
 
 	/// Find all solutions with regard to a list of given variables.
@@ -790,7 +773,6 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 							}),
 							"add objective bound"
 						);
-						// TODO:proof_hints add hint soli
 						self.add_clause([bound_lit.unwrap()]).unwrap();
 					}
 				}
@@ -1001,10 +983,13 @@ impl<Oracle: PropagatingSolver<Engine>> BrancherInitActions for Solver<Oracle> {
 	}
 }
 
-impl<Oracle: ClauseDatabase> ClauseDatabase for Solver<Oracle> {
+impl<Oracle: PropagatingSolver<Engine>> ClauseDatabase for Solver<Oracle> {
+	fn add_clause_from_slice(&mut self, clause: &[RawLit]) -> Result<(), Unsatisfiable> {
+		self.oracle.add_clause_from_slice(clause)
+	}
 	delegate! {
 		to self.oracle {
-			fn add_clause_from_slice(&mut self, clause: &[RawLit]) -> Result<(), Unsatisfiable>;
+
 			fn new_var_range(&mut self, len: usize) -> pindakaas::VarRange;
 		}
 	}
@@ -1040,9 +1025,6 @@ impl<Oracle: PropagatingSolver<Engine>> DecisionActions for Solver<Oracle> {
 				def.next.map(Into::into),
 			) {
 				trace!(clause = ?cl.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add clause");
-				if engine.state.config.prove {
-					oracle.add_proof_hint(" :: lazy_lit_def");
-				}
 				clauses.push(cl);
 			}
 			v
@@ -1163,6 +1145,22 @@ impl<Oracle: PropagatingSolver<Engine>> PropagatorInitActions for Solver<Oracle>
 
 	fn new_trailed_int(&mut self, init: IntVal) -> TrailedInt {
 		self.engine_mut().state.trail.track_int(init)
+	}
+
+	fn add_clause_from_slice_with_proof_hint(
+		&mut self,
+		clause: &[RawLit],
+		proof_hint: Option<&str>,
+	) -> Result<(), ReformulationError> {
+		let (oracle, engine) = self.oracle.access_solving();
+		if engine.state.prove {
+			if let Some(hint) = proof_hint {
+				oracle.add_proof_hint(hint);
+			}
+		}
+		self.oracle
+			.add_clause_from_slice(clause)
+			.map_err(|_| ReformulationError::TrivialUnsatisfiable)
 	}
 }
 

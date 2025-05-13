@@ -1101,7 +1101,9 @@ impl Model {
 	{
 		// TODO: run SAT simplification
 		let mut slv = Solver::<Oracle>::from(&self.cnf);
+		slv.engine_mut().state.prove = config.proof_path().is_some();
 		let any_slv: &mut dyn Any = slv.oracle.solver_mut();
+
 		if let Some(r) = any_slv.downcast_mut::<Cadical>() {
 			// Set the solver options for preprocessing/inprocessing
 			r.set_option("condition", config.conditioning() as i32);

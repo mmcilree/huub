@@ -295,6 +295,48 @@ pub trait PropagatorInitActions: AsDynClauseDatabase + ClauseDatabase + Decision
 	/// Enqueue a propagator to be enqueued when an integer variable is changed
 	/// according to the given propagation condition.
 	fn enqueue_on_int_change(&mut self, prop: PropRef, var: IntView, condition: IntPropCond);
+
+	/// Add a clause to the `ClauseDatabase` to the underlying Clause database, with
+	/// and optional proof hint string.
+	fn add_clause_from_slice_with_proof_hint(
+		&mut self,
+		clause: &[RawLit],
+		hint: Option<&str>,
+	) -> Result<(), ReformulationError>;
+}
+
+/// Additional actions that can be performed during the initialization of propagators.
+/// This is needed for proof hints only, currently.
+pub trait PropagatorInitActionsTools: PropagatorInitActions {
+	/// Convert an clause to a slice of literals and add it to the
+	/// underlying ClauseDatase, and add an optional proof hint string.
+	fn add_clause_with_proof_hint<Iter>(
+		&mut self,
+		clause: Iter,
+		proof_hint: Option<&str>,
+	) -> Result<(), ReformulationError>
+	where
+		Iter: IntoIterator,
+		Iter::Item: Into<BoolView>,
+	{
+		let result: Result<Vec<_>, ()> = clause
+			.into_iter()
+			.filter_map(|v| match v.into().0 {
+				BoolViewInner::Const(false) => None, // Irrelevant literal
+				BoolViewInner::Const(true) => Some(Err(())), // Clause is already satisfied
+				BoolViewInner::Lit(lit) => Some(Ok(lit)), // Add literal to clause
+			})
+			.collect();
+
+		match result {
+			Ok(clause) => {
+				let result = self.add_clause_from_slice_with_proof_hint(&clause, proof_hint);
+				result
+			}
+			// Collecting revealed the clause was already satisfied
+			Err(()) => Ok(()),
+		}
+	}
 }
 
 /// Actions that can be performed when reformulating a [`Model`] object into a
@@ -412,3 +454,5 @@ pub trait TrailingActions {
 	/// solver backtracks to a previous state.
 	fn set_trailed_int(&mut self, i: TrailedInt, v: IntVal) -> IntVal;
 }
+
+impl<P: ?Sized + PropagatorInitActions> PropagatorInitActionsTools for P {}

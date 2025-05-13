@@ -475,6 +475,7 @@ impl PropagatorInitActions for ReformulationContext<'_> {
 			fn enqueue_now(&mut self, prop: PropRef);
 			fn enqueue_on_bool_change(&mut self, prop: PropRef, var: BoolView);
 			fn enqueue_on_int_change(&mut self, prop: PropRef, var: IntView, condition: IntPropCond);
+			fn add_clause_from_slice_with_proof_hint(&mut self,clause: &[RawLit],proof_hint: Option<&str>) -> Result<(),ReformulationError>;
 		}
 	}
 }

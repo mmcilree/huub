@@ -9,12 +9,10 @@ use std::{
 };
 
 use huub::{solver::IntLitMeaning, IntVal};
-
 use tracing::{
 	field::{Field, Visit},
 	Event, Subscriber,
 };
-
 use tracing_subscriber::{
 	field::{MakeVisitor, RecordFields, VisitOutput},
 	filter::{LevelFilter, Targets},
@@ -26,7 +24,6 @@ use tracing_subscriber::{
 	layer::{Context, SubscriberExt},
 	Layer, Registry,
 };
-
 use ustr::Ustr;
 
 /// A [`tracing_subscriber::FormatFields`] implementation that attempts to

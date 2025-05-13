@@ -17,7 +17,7 @@ use pindakaas::{
 use rangelist::{IntervalIterator, RangeList};
 
 use crate::{
-	actions::TrailingActions,
+	actions::{PropagatorInitActions, TrailingActions},
 	solver::{
 		engine::Engine, trail::TrailedInt, BoolView, BoolViewInner, IntLitMeaning, IntView,
 		IntViewInner,
@@ -630,7 +630,10 @@ impl IntVar {
 		domain: IntSetVal,
 		order_encoding: EncodingType,
 		direct_encoding: EncodingType,
-	) -> IntView {
+	) -> IntView
+	where
+		Solver<Oracle>: PropagatorInitActions,
+	{
 		let orig_domain_len = domain.card();
 		assert!(
 			orig_domain_len != 0,
@@ -691,9 +694,15 @@ impl IntVar {
 				slv.oracle.add_clause([!ord_i, ord_j]).unwrap(); // x<i -> x<(i+n)
 				if matches!(direct_encoding, DirectStorage::Eager(_)) {
 					let eq_i: RawLit = direct_enc_iter.next().unwrap().into();
-					slv.oracle.add_clause([!eq_i, !ord_i]).unwrap(); // x=i -> x≥i
-					slv.oracle.add_clause([!eq_i, ord_j]).unwrap(); // x=i -> x<(i+n)
-					slv.oracle.add_clause([eq_i, ord_i, !ord_j]).unwrap(); // x≠i -> (x<i \/ x≥(i+n))
+					slv.add_clause_from_slice_with_proof_hint(&[!eq_i, !ord_i], Some(":: int_var"))
+						.unwrap(); // x=i -> x≥i
+					slv.add_clause_from_slice_with_proof_hint(&[!eq_i, ord_j], Some(":: int_var"))
+						.unwrap(); // x=i -> x<(i+n)
+					slv.add_clause_from_slice_with_proof_hint(
+						&[eq_i, ord_i, !ord_j],
+						Some(":: int_var"),
+					)
+					.unwrap(); // x≠i -> (x<i \/ x≥(i+n))
 				}
 			}
 			debug_assert!(direct_enc_iter.next().is_none());

@@ -4,10 +4,8 @@
 
 use std::iter::once;
 
-use pindakaas::ClauseDatabaseTools;
-
 use crate::{
-	actions::{ReformulationActions, SimplificationActions},
+	actions::{PropagatorInitActionsTools, ReformulationActions, SimplificationActions},
 	constraints::{Constraint, SimplificationStatus},
 	reformulate::ReformulationError,
 	solver::IntLitMeaning,
@@ -54,15 +52,21 @@ impl<S: SimplificationActions> Constraint<S> for BoolDecisionArrayElement {
 			// Evaluate array literal
 			let idx_eq = slv.get_int_lit(index, IntLitMeaning::Eq(i as IntVal));
 			// add clause (idx = i + 1 /\ arr[i]) => val
-			slv.add_clause([!idx_eq, !l, result])?;
+			slv.add_clause_with_proof_hint([!idx_eq, !l, result], Some(":: bool_array_element"))?;
 			// add clause (idx = i + 1 /\ !arr[i]) => !val
-			slv.add_clause([!idx_eq, l, !result])?;
+			slv.add_clause_with_proof_hint([!idx_eq, l, !result], Some(":: bool_array_element"))?;
 		}
 
 		// add clause (arr[1] /\ arr[2] /\ ... /\ arr[n]) => val
-		slv.add_clause(arr.iter().map(|&l| !l).chain(once(result)))?;
+		slv.add_clause_with_proof_hint(
+			arr.iter().map(|&l| !l).chain(once(result)),
+			Some(":: bool_array_element"),
+		)?;
 		// add clause (!arr[1] /\ !arr[2] /\ ... /\ !arr[n]) => !val
-		slv.add_clause(arr.into_iter().chain(once(!result)))?;
+		slv.add_clause_with_proof_hint(
+			arr.into_iter().chain(once(!result)),
+			Some(":: bool_array_element"),
+		)?;
 		Ok(())
 	}
 }

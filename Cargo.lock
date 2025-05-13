@@ -306,6 +306,7 @@ dependencies = [
  "humantime",
  "huub",
  "pico-args",
+ "pindakaas",
  "serde_json",
  "tracing",
  "tracing-subscriber",

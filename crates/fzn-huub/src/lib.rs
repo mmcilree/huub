@@ -47,6 +47,7 @@ use huub::{
 	SlvTermSignal,
 };
 use pico_args::Arguments;
+use pindakaas::ClauseDatabaseTools;
 use serde_json::json;
 use tracing::{subscriber::set_default, warn};
 use tracing_subscriber::fmt::MakeWriter;
@@ -69,6 +70,7 @@ const FZN_UNSATISFIABLE: &str = "=====UNSATISFIABLE=====";
 ///
 /// This interface is intended to connect Huub with MiniZinc
 #[derive(Debug)]
+
 pub struct Cli<Stdout, Stderr> {
 	/// Path to the FlatZinc JSON input file
 	path: PathBuf,
