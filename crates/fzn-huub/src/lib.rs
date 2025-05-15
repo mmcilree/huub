@@ -40,14 +40,13 @@ use std::{
 
 use flatzinc_serde::{FlatZinc, Literal, Method};
 use huub::{
-	actions::DecisionActions,
+	actions::{DecisionActions, PropagatorInitActionsTools},
 	flatzinc::{FlatZincError, FlatZincStatistics},
 	reformulate::{InitConfig, ReformulationError},
 	solver::{Goal, IntLitMeaning, SolveResult, Solver, Valuation, Value, View},
 	SlvTermSignal,
 };
 use pico_args::Arguments;
-use pindakaas::ClauseDatabaseTools;
 use serde_json::json;
 use tracing::{subscriber::set_default, warn};
 use tracing_subscriber::fmt::MakeWriter;
@@ -467,7 +466,8 @@ where
 						unreachable!()
 					};
 					let obj_lit = slv.get_int_lit(obj, IntLitMeaning::Eq(obj_val));
-					slv.add_clause([obj_lit]).unwrap();
+					slv.add_clause_with_proof_hint([obj_lit], Some(":: obj_lit"))
+						.unwrap();
 					// Ensure all following solutions are different from the first optimal
 					// solution
 					if slv.add_no_good(&output_vars, &no_good_vals).is_err() {

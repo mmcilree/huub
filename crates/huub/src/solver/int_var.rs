@@ -691,7 +691,8 @@ impl IntVar {
 			for (ord_i, ord_j) in (*storage).tuple_windows() {
 				let ord_i: RawLit = ord_i.into(); // x<i
 				let ord_j: RawLit = ord_j.into(); // x<j, where j = i + n and n≥1
-				slv.oracle.add_clause([!ord_i, ord_j]).unwrap(); // x<i -> x<(i+n)
+				slv.add_clause_from_slice_with_proof_hint(&[!ord_i, ord_j], Some(":: int_var"))
+					.unwrap(); // x<i -> x<(i+n)
 				if matches!(direct_encoding, DirectStorage::Eager(_)) {
 					let eq_i: RawLit = direct_enc_iter.next().unwrap().into();
 					slv.add_clause_from_slice_with_proof_hint(&[!eq_i, !ord_i], Some(":: int_var"))
