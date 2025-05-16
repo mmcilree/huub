@@ -11,7 +11,8 @@ use crate::{
 	reformulate::ReformulationError,
 	solver::{
 		activation_list::IntPropCond, engine::PropRef, int_var::IntVarRef, queue::PriorityLevel,
-		trail::TrailedInt, BoolView, BoolViewInner, IntLitMeaning, IntView, IntViewInner, View,
+		trail::TrailedInt, BoolView, BoolViewInner, IntLitMeaning, IntView, IntViewInner,
+		ProofHint, View,
 	},
 	BoolDecision, IntDecision, IntSetVal, IntVal, Model,
 };
@@ -171,21 +172,7 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 	///
 	/// Note that it is possible to enforce that a boolean view is `false` by
 	/// negating the view, i.e. `!bv`.
-	fn set_bool(&mut self, bv: BoolView, reason: impl ReasonBuilder<Self>) -> Result<(), Conflict> {
-		self.set_bool_with_proof_hint(bv, reason, None)
-	}
-
-	/// Enforce a boolean view to be `true` because of a given `reason`, and optionally
-	/// provide a hint to write in the proof log.
-	///
-	/// Note that it is possible to enforce that a boolean view is `false` by
-	/// negating the view, i.e. `!bv`.
-	fn set_bool_with_proof_hint(
-		&mut self,
-		bv: BoolView,
-		reason: impl ReasonBuilder<Self>,
-		hint: Option<&str>,
-	) -> Result<(), Conflict>;
+	fn set_bool(&mut self, bv: BoolView, reason: impl ReasonBuilder<Self>) -> Result<(), Conflict>;
 
 	/// Enforce that a an integer view takes a value that is greater or equal to
 	/// `val` because of the given `reason`.
@@ -194,19 +181,6 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-	) -> Result<(), Conflict> {
-		self.set_int_lower_bound_with_proof_hint(var, val, reason, None)
-	}
-
-	/// Enforce that a an integer view takes a value that is greater or equal to
-	/// `val` because of the given `reason`, and optionally provide a hint to write
-	/// in the proof log.
-	fn set_int_lower_bound_with_proof_hint(
-		&mut self,
-		var: IntView,
-		val: IntVal,
-		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict>;
 
 	/// Enforce that a an integer view takes a value that is less or equal to
@@ -216,19 +190,6 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-	) -> Result<(), Conflict> {
-		self.set_int_upper_bound_with_proof_hint(var, val, reason, None)
-	}
-
-	/// Enforce that a an integer view takes a value that is less or equal to
-	/// `val` because of the given `reason`, and optionally provide a hint to write
-	/// in the proof log.
-	fn set_int_upper_bound_with_proof_hint(
-		&mut self,
-		var: IntView,
-		val: IntVal,
-		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict>;
 
 	/// Enforce that a an integer view takes a value `val` because of the given
@@ -238,18 +199,6 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-	) -> Result<(), Conflict> {
-		self.set_int_val_with_proof_hint(var, val, reason, None)
-	}
-
-	/// Enforce that a an integer view takes a value `val` because of the given
-	/// `reason`, and optionally provide a hint to write in the proof log.
-	fn set_int_val_with_proof_hint(
-		&mut self,
-		var: IntView,
-		val: IntVal,
-		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict>;
 
 	/// Enforce that a an integer view cannot take a value `val` because of the
@@ -259,17 +208,6 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-	) -> Result<(), Conflict> {
-		self.set_int_not_eq_with_proof_hint(var, val, reason, None)
-	}
-	/// Enforce that a an integer view cannot take a value `val` because of the
-	/// given `reason`, and optionally provide a hint to write in the proof log.
-	fn set_int_not_eq_with_proof_hint(
-		&mut self,
-		var: IntView,
-		val: IntVal,
-		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict>;
 
 	/// Create a placeholder reason that will cause the solver to call the
@@ -282,6 +220,14 @@ pub trait PropagationActions: ExplanationActions + DecisionActions {
 pub trait PropagatorInitActions: AsDynClauseDatabase + ClauseDatabase + DecisionActions {
 	/// Add a propagator to the solver.
 	fn add_propagator(&mut self, propagator: BoxedPropagator, priority: PriorityLevel) -> PropRef;
+
+	/// Add a propagator to the solver, with an associated proof hint.
+	fn add_propagator_with_proof_hint(
+		&mut self,
+		propagator: BoxedPropagator,
+		priority: PriorityLevel,
+		proof_hint: Option<ProofHint>,
+	) -> PropRef;
 
 	/// Create a new trailed integer value with the given initial value.
 	fn new_trailed_int(&mut self, init: IntVal) -> TrailedInt;
@@ -301,8 +247,13 @@ pub trait PropagatorInitActions: AsDynClauseDatabase + ClauseDatabase + Decision
 	fn add_clause_from_slice_with_proof_hint(
 		&mut self,
 		clause: &[RawLit],
-		hint: Option<&str>,
+		hint: Option<ProofHint>,
 	) -> Result<(), ReformulationError>;
+
+	/// Get the current proof hint
+	fn get_current_proof_hint(&mut self) -> Option<ProofHint> {
+		None
+	}
 }
 
 /// Additional actions that can be performed during the initialization of propagators.
@@ -313,7 +264,7 @@ pub trait PropagatorInitActionsTools: PropagatorInitActions {
 	fn add_clause_with_proof_hint<Iter>(
 		&mut self,
 		clause: Iter,
-		proof_hint: Option<&str>,
+		proof_hint: Option<ProofHint>,
 	) -> Result<(), ReformulationError>
 	where
 		Iter: IntoIterator,

@@ -578,16 +578,12 @@ where
 		if let Some(&r) = self.reification.get() {
 			let r = BoolView(BoolViewInner::Lit(r));
 			if sum < 0 {
-				actions.set_bool_with_proof_hint(
-					!r,
-					|a: &mut P| {
-						self.terms
-							.iter()
-							.map(|v| a.get_int_lower_bound_lit(*v))
-							.collect_vec()
-					},
-					Some(" :: int_lin_le"),
-				)?;
+				actions.set_bool(!r, |a: &mut P| {
+					self.terms
+						.iter()
+						.map(|v| a.get_int_lower_bound_lit(*v))
+						.collect_vec()
+				})?;
 			}
 			// skip the remaining propagation if the reified variable is not assigned to true
 			if !actions.get_bool_val(r).unwrap_or(false) {
@@ -599,7 +595,7 @@ where
 		for (j, &v) in self.terms.iter().enumerate() {
 			let reason = actions.deferred_reason(j as u64);
 			let ub = sum + actions.get_int_lower_bound(v);
-			actions.set_int_upper_bound_with_proof_hint(v, ub, reason, Some(" :: int_lin_le"))?;
+			actions.set_int_upper_bound(v, ub, reason)?;
 		}
 		Ok(())
 	}

@@ -82,12 +82,14 @@ impl IntArrayMinimumBounds {
 	where
 		P: PropagatorInitActions + ?Sized,
 	{
-		let prop = solver.add_propagator(
+		let proof_hint = solver.get_current_proof_hint();
+		let prop = solver.add_propagator_with_proof_hint(
 			Box::new(Self {
 				vars: vars.clone(),
 				min,
 			}),
 			PriorityLevel::Low,
+			proof_hint,
 		);
 		for v in vars {
 			solver.enqueue_on_int_change(prop, v, IntPropCond::Bounds);
@@ -123,36 +125,21 @@ where
 				});
 		// set y to be less than or equal to the minimum of upper bounds of x_i
 		let reason = actions.get_int_upper_bound_lit(min_ub_var);
-		actions.set_int_upper_bound_with_proof_hint(
-			self.min,
-			min_ub,
-			reason,
-			Some(" :: array_int_minimum"),
-		)?;
+		actions.set_int_upper_bound(self.min, min_ub, reason)?;
 
 		// set y to be greater than or equal to the minimum of lower bounds of x_i
-		actions.set_int_lower_bound_with_proof_hint(
-			self.min,
-			min_lb,
-			|a: &mut P| {
-				self.vars
-					.iter()
-					.map(|&x| a.get_int_lit(x, IntLitMeaning::GreaterEq(min_lb)))
-					.collect_vec()
-			},
-			Some(" :: array_int_minimum"),
-		)?;
+		actions.set_int_lower_bound(self.min, min_lb, |a: &mut P| {
+			self.vars
+				.iter()
+				.map(|&x| a.get_int_lit(x, IntLitMeaning::GreaterEq(min_lb)))
+				.collect_vec()
+		})?;
 
 		// set x_i to be greater than or equal to y.lowerbound
 		let reason = actions.get_int_lower_bound_lit(self.min);
 		let y_lb = actions.get_int_lower_bound(self.min);
 		for &x in self.vars.iter() {
-			actions.set_int_lower_bound_with_proof_hint(
-				x,
-				y_lb,
-				reason,
-				Some(" :: array_int_minimum"),
-			)?;
+			actions.set_int_lower_bound(x, y_lb, reason)?;
 		}
 
 		Ok(())

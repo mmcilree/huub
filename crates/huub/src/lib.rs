@@ -40,6 +40,7 @@ use pindakaas::{
 	ClauseDatabase, ClauseDatabaseTools, Cnf, Lit as RawLit, Unsatisfiable,
 };
 use rangelist::{IntervalIterator, RangeList};
+use solver::ProofID;
 use tracing::warn;
 
 use crate::{
@@ -171,7 +172,8 @@ pub struct Model {
 	/// instances to be used in order to make search decisions.
 	branchings: Vec<Branching>,
 	/// A list of constraints that have been added to the model.
-	constraints: Vec<Option<ConstraintStore>>,
+	/// with an optional id to reference it in the proof.
+	constraints: Vec<Option<(ConstraintStore, Vec<ProofID>)>>,
 	/// The definitions of the Boolean variables that have been created.
 	bool_vars: Vec<BoolDecisionDef>,
 	/// The definitions of the integer variables that have been created.
@@ -884,8 +886,8 @@ impl Model {
 	///
 	/// Note that users will use either the `+=` operator or the
 	/// [`Self::add_custom_constraint`] method.
-	fn add_constraint(&mut self, constraint: ConstraintStore) {
-		self.constraints.push(Some(constraint));
+	fn add_constraint(&mut self, constraint: ConstraintStore, proof_ids: Vec<ProofID>) {
+		self.constraints.push(Some((constraint, proof_ids)));
 		self.enqueued.push(false);
 		self.enqueue(self.constraints.len() - 1);
 		self.subscribe(self.constraints.len() - 1);
@@ -907,11 +909,12 @@ impl Model {
 	/// Create a new [`Model`] instance from a [`FlatZinc`] instance.
 	pub fn from_fzn<S, MapTy: FromIterator<(S, Decision)>>(
 		fzn: &FlatZinc<S>,
+		prove: bool,
 	) -> Result<(Self, MapTy, FlatZincStatistics), FlatZincError>
 	where
 		S: Clone + Debug + Deref<Target = str> + Display + Eq + Hash + Ord,
 	{
-		let mut builder = FznModelBuilder::new(fzn);
+		let mut builder = FznModelBuilder::new(fzn, prove);
 		builder.unify_variables()?;
 		builder.extract_views()?;
 		builder.post_constraints()?;
@@ -959,7 +962,7 @@ impl Model {
 	/// Propagate the constraint at index `con`, updating the domains of the
 	/// variables and rewriting the constraint if necessary.
 	pub(crate) fn propagate(&mut self, con: usize) -> Result<(), ReformulationError> {
-		let Some(mut con_obj) = self.constraints[con].take() else {
+		let Some((mut con_obj, proof_id)) = self.constraints[con].take() else {
 			return Ok(());
 		};
 
@@ -986,7 +989,7 @@ impl Model {
 				// Constraint is known to be satisfied, no need to place back.
 			}
 			SimplificationStatus::Fixpoint => {
-				self.constraints[con] = Some(con_obj);
+				self.constraints[con] = Some((con_obj, proof_id));
 			}
 		}
 		Ok(())
@@ -1030,7 +1033,7 @@ impl Model {
 			}
 		}
 
-		let con_store = self.constraints[con].take().unwrap();
+		let (con_store, proof_id) = self.constraints[con].take().unwrap();
 		let mut ctx = ConstraintInitContext { con, model: self };
 		match &con_store {
 			ConstraintStore::IntAllDifferent(con) => {
@@ -1080,7 +1083,7 @@ impl Model {
 			}
 			ConstraintStore::Other(con) => con.initialize(&mut ctx),
 		}
-		self.constraints[con] = Some(con_store);
+		self.constraints[con] = Some((con_store, proof_id));
 	}
 
 	/// Process the model to create a [`Solver`] instance that can be used to
@@ -1139,7 +1142,7 @@ impl Model {
 		let mut int_eager_direct = HashSet::<IntDecisionIndex>::new();
 		let int_eager_order = HashSet::<IntDecisionIndex>::new();
 
-		for c in self.constraints.iter().flatten() {
+		for (c, _) in self.constraints.iter().flatten() {
 			match c {
 				ConstraintStore::IntAllDifferent(c) if c.value_consistent_propagator_enabled() => {
 					for v in &c.vars {
@@ -1208,8 +1211,8 @@ impl Model {
 		let map = map_builder.finalize();
 
 		// Create constraint data structures within the solver
-		for c in self.constraints.iter().flatten() {
-			c.to_solver(&mut slv, &map)?;
+		for (c, proof_id) in self.constraints.iter().flatten() {
+			c.to_solver(&mut slv, &map, proof_id.clone())?;
 		}
 		// Add branching data structures to the solver
 		for b in self.branchings.iter() {
@@ -1221,104 +1224,104 @@ impl Model {
 }
 
 impl AddAssign<BoolDecisionArrayElement> for Model {
-	fn add_assign(&mut self, constraint: BoolDecisionArrayElement) {
-		self.add_constraint(ConstraintStore::BoolDecisionArrayElement(constraint));
+	fn add_assign(&mut self, c: BoolDecisionArrayElement) {
+		self.add_constraint(ConstraintStore::BoolDecisionArrayElement(c), vec![]);
 	}
 }
 
 impl AddAssign<BoxedConstraint> for Model {
-	fn add_assign(&mut self, constraint: BoxedConstraint) {
-		self.add_constraint(ConstraintStore::Other(constraint));
+	fn add_assign(&mut self, c: BoxedConstraint) {
+		self.add_constraint(ConstraintStore::Other(c), vec![]);
 	}
 }
 
 impl AddAssign<Branching> for Model {
-	fn add_assign(&mut self, rhs: Branching) {
-		self.branchings.push(rhs);
+	fn add_assign(&mut self, b: Branching) {
+		self.branchings.push(b);
 	}
 }
 
 impl AddAssign<DisjunctiveStrict> for Model {
-	fn add_assign(&mut self, constraint: DisjunctiveStrict) {
-		self.add_constraint(ConstraintStore::DisjunctiveStrict(constraint));
+	fn add_assign(&mut self, c: DisjunctiveStrict) {
+		self.add_constraint(ConstraintStore::DisjunctiveStrict(c), vec![]);
 	}
 }
 
 impl AddAssign<Formula<BoolDecision>> for Model {
-	fn add_assign(&mut self, constraint: Formula<BoolDecision>) {
-		self.add_constraint(ConstraintStore::BoolFormula(constraint));
+	fn add_assign(&mut self, c: Formula<BoolDecision>) {
+		self.add_constraint(ConstraintStore::BoolFormula(c), vec![]);
 	}
 }
 
 impl AddAssign<IntAbs> for Model {
-	fn add_assign(&mut self, constraint: IntAbs) {
-		self.add_constraint(ConstraintStore::IntAbs(constraint));
+	fn add_assign(&mut self, c: IntAbs) {
+		self.add_constraint(ConstraintStore::IntAbs(c), vec![]);
 	}
 }
 
 impl AddAssign<IntAllDifferent> for Model {
-	fn add_assign(&mut self, constraint: IntAllDifferent) {
-		self.add_constraint(ConstraintStore::IntAllDifferent(constraint));
+	fn add_assign(&mut self, c: IntAllDifferent) {
+		self.add_constraint(ConstraintStore::IntAllDifferent(c), vec![]);
 	}
 }
 
 impl AddAssign<IntArrayMinimum> for Model {
-	fn add_assign(&mut self, constraint: IntArrayMinimum) {
-		self.add_constraint(ConstraintStore::IntArrayMinimum(constraint));
+	fn add_assign(&mut self, c: IntArrayMinimum) {
+		self.add_constraint(ConstraintStore::IntArrayMinimum(c), vec![]);
 	}
 }
 
 impl AddAssign<IntDecisionArrayElement> for Model {
-	fn add_assign(&mut self, constraint: IntDecisionArrayElement) {
-		self.add_constraint(ConstraintStore::IntDecisionArrayElement(constraint));
+	fn add_assign(&mut self, c: IntDecisionArrayElement) {
+		self.add_constraint(ConstraintStore::IntDecisionArrayElement(c), vec![]);
 	}
 }
 
 impl AddAssign<IntDiv> for Model {
-	fn add_assign(&mut self, constraint: IntDiv) {
-		self.add_constraint(ConstraintStore::IntDiv(constraint));
+	fn add_assign(&mut self, c: IntDiv) {
+		self.add_constraint(ConstraintStore::IntDiv(c), vec![]);
 	}
 }
 
 impl AddAssign<IntEq> for Model {
-	fn add_assign(&mut self, constraint: IntEq) {
-		self.add_constraint(ConstraintStore::IntEq(constraint));
+	fn add_assign(&mut self, c: IntEq) {
+		self.add_constraint(ConstraintStore::IntEq(c), vec![]);
 	}
 }
 
 impl AddAssign<IntInSetReif> for Model {
-	fn add_assign(&mut self, constraint: IntInSetReif) {
-		self.add_constraint(ConstraintStore::IntInSetReif(constraint));
+	fn add_assign(&mut self, c: IntInSetReif) {
+		self.add_constraint(ConstraintStore::IntInSetReif(c), vec![]);
 	}
 }
 
 impl AddAssign<IntLinear> for Model {
-	fn add_assign(&mut self, constraint: IntLinear) {
-		self.add_constraint(ConstraintStore::IntLinear(constraint));
+	fn add_assign(&mut self, c: IntLinear) {
+		self.add_constraint(ConstraintStore::IntLinear(c), vec![]);
 	}
 }
 
 impl AddAssign<IntPow> for Model {
-	fn add_assign(&mut self, constraint: IntPow) {
-		self.add_constraint(ConstraintStore::IntPow(constraint));
+	fn add_assign(&mut self, c: IntPow) {
+		self.add_constraint(ConstraintStore::IntPow(c), vec![]);
 	}
 }
 
 impl AddAssign<IntTable> for Model {
-	fn add_assign(&mut self, constraint: IntTable) {
-		self.add_constraint(ConstraintStore::IntTable(constraint));
+	fn add_assign(&mut self, c: IntTable) {
+		self.add_constraint(ConstraintStore::IntTable(c), vec![]);
 	}
 }
 
 impl AddAssign<IntTimes> for Model {
-	fn add_assign(&mut self, constraint: IntTimes) {
-		self.add_constraint(ConstraintStore::IntTimes(constraint));
+	fn add_assign(&mut self, c: IntTimes) {
+		self.add_constraint(ConstraintStore::IntTimes(c), vec![]);
 	}
 }
 
 impl AddAssign<IntValArrayElement> for Model {
-	fn add_assign(&mut self, constraint: IntValArrayElement) {
-		self.add_constraint(ConstraintStore::IntValArrayElement(constraint));
+	fn add_assign(&mut self, c: IntValArrayElement) {
+		self.add_constraint(ConstraintStore::IntValArrayElement(c), vec![]);
 	}
 }
 

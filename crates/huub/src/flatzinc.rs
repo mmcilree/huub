@@ -24,8 +24,9 @@ use crate::{
 	abs_int, actions::SimplificationActions, all_different_int, array_element, array_maximum_int,
 	array_minimum_int, constraints::int_table::IntTable, disjunctive_strict, div_int,
 	int_in_set_reif, pow_int, reformulate::ReformulationError, table_int, times_int, BoolDecision,
-	BoolDecisionInner, Branching, Decision, IntDecision, IntDecisionInner, IntLinExpr, IntSetVal,
-	IntVal, Model, NonZeroIntVal, ValueSelection, VariableSelection,
+	BoolDecisionInner, Branching, ConstraintStore, Decision, IntDecision, IntDecisionInner,
+	IntLinExpr, IntSetVal, IntVal, Model, NonZeroIntVal, ProofID, ValueSelection,
+	VariableSelection,
 };
 
 #[derive(Error, Debug)]
@@ -88,6 +89,8 @@ pub(crate) struct FznModelBuilder<'a, S: Eq + Hash + Ord> {
 	processed: Vec<bool>,
 	/// Statistics about the extraction process
 	stats: FlatZincStatistics,
+	/// Whether we are proof logging
+	prove: bool,
 }
 
 impl FlatZincStatistics {
@@ -787,13 +790,14 @@ where
 		}
 	}
 	/// Create a new builder to create a model from a FlatZinc instance
-	pub(crate) fn new(fzn: &'a FlatZinc<S>) -> Self {
+	pub(crate) fn new(fzn: &'a FlatZinc<S>, prove: bool) -> Self {
 		Self {
 			fzn,
 			map: HashMap::new(),
 			prb: Model::default(),
 			processed: vec![false; fzn.constraints.len()],
 			stats: FlatZincStatistics::default(),
+			prove,
 		}
 	}
 
@@ -879,6 +883,12 @@ where
 				continue;
 			}
 			let mut ann_used = vec![false; c.ann.len()];
+
+			let mut fzn_ids = Vec::<ProofID>::new();
+			if self.prove {
+				fzn_ids.push(i.try_into().unwrap());
+			}
+
 			match c.id.deref() {
 				"array_bool_and" => {
 					if let [es, r] = c.args.as_slice() {
@@ -923,7 +933,10 @@ where
 						let idx = self.arg_int(idx)?;
 						let val = self.arg_bool(val)?;
 
-						self.prb += array_element(arr, idx - 1, val);
+						self.prb.add_constraint(
+							ConstraintStore::IntInSetReif(array_element(arr, idx - 1, val)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "array_bool_element",
@@ -941,7 +954,10 @@ where
 							.try_collect()?;
 						let idx = self.arg_int(idx)?;
 						let val = self.arg_int(val)?;
-						self.prb += array_element(arr, idx - 1, val);
+						self.prb.add_constraint(
+							ConstraintStore::IntValArrayElement(array_element(arr, idx - 1, val)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "array_int_element",
@@ -960,7 +976,14 @@ where
 						let idx = self.arg_int(idx)?;
 						let val = self.arg_bool(val)?;
 
-						self.prb += array_element(arr, idx - 1, val);
+						self.prb.add_constraint(
+							ConstraintStore::BoolDecisionArrayElement(array_element(
+								arr,
+								idx - 1,
+								val,
+							)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "array_var_bool_element",
@@ -979,7 +1002,14 @@ where
 						let idx = self.arg_int(idx)?;
 						let val = self.arg_int(val)?;
 
-						self.prb += array_element(arr, idx - 1, val);
+						self.prb.add_constraint(
+							ConstraintStore::IntDecisionArrayElement(array_element(
+								arr,
+								idx - 1,
+								val,
+							)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "array_var_int_element",
@@ -1024,7 +1054,8 @@ where
 							.chain(once(-sum))
 							.sum();
 
-						self.prb += lin_exp.eq(0);
+						self.prb
+							.add_constraint(ConstraintStore::IntLinear(lin_exp.eq(0)), fzn_ids);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "bool_lin_eq",
@@ -1138,7 +1169,8 @@ where
 								all_diff.use_value_consistent_propagator(value);
 							}
 						}
-						self.prb += all_diff;
+						self.prb
+							.add_constraint(ConstraintStore::IntAllDifferent(all_diff), fzn_ids);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "huub_all_different",
@@ -1155,9 +1187,15 @@ where
 							args.iter().map(|l| self.lit_int(l)).collect();
 						let m = self.arg_int(m)?;
 						if is_maximum {
-							self.prb += array_maximum_int(args?, m);
+							self.prb.add_constraint(
+								ConstraintStore::IntArrayMinimum(array_maximum_int(args?, m)),
+								fzn_ids,
+							);
 						} else {
-							self.prb += array_minimum_int(args?, m);
+							self.prb.add_constraint(
+								ConstraintStore::IntArrayMinimum(array_minimum_int(args?, m)),
+								fzn_ids,
+							);
 						}
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
@@ -1206,7 +1244,13 @@ where
 							.iter()
 							.map(|l| self.par_int(l))
 							.try_collect()?;
-						self.prb += disjunctive_strict(start_times, durations);
+						self.prb.add_constraint(
+							ConstraintStore::DisjunctiveStrict(disjunctive_strict(
+								start_times,
+								durations,
+							)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "huub_disjunctive_strict",
@@ -1251,7 +1295,8 @@ where
 						// Convert regular constraint in to table constraints and add them to the model
 						let tables = self.convert_regular_to_tables(x, d, q0, f);
 						for table in tables {
-							self.prb += table;
+							self.prb
+								.add_constraint(ConstraintStore::IntTable(table), fzn_ids.clone());
 						}
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
@@ -1282,7 +1327,10 @@ where
 							.into_iter()
 							.map(|c| c.collect())
 							.collect();
-						self.prb += table_int(args, table);
+						self.prb.add_constraint(
+							ConstraintStore::IntTable(table_int(args, table)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "huub_table_int",
@@ -1295,7 +1343,8 @@ where
 					if let [origin, abs] = c.args.as_slice() {
 						let origin = self.arg_int(origin)?;
 						let abs = self.arg_int(abs)?;
-						self.prb += abs_int(origin, abs);
+						self.prb
+							.add_constraint(ConstraintStore::IntAbs(abs_int(origin, abs)), fzn_ids);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "int_abs",
@@ -1309,7 +1358,10 @@ where
 						let num = self.arg_int(num)?;
 						let denom = self.arg_int(denom)?;
 						let res = self.arg_int(res)?;
-						self.prb += div_int(num, denom, res);
+						self.prb.add_constraint(
+							ConstraintStore::IntDiv(div_int(num, denom, res)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "int_div",
@@ -1323,11 +1375,14 @@ where
 						let a = self.arg_int(a)?;
 						let b = self.arg_int(b)?;
 						let lin_exp = a - b;
-						self.prb += match c.id.deref() {
-							"int_le" => lin_exp.leq(0),
-							"int_ne" => lin_exp.ne(0),
-							_ => unreachable!(),
-						};
+						self.prb.add_constraint(
+							match c.id.deref() {
+								"int_le" => ConstraintStore::IntLinear(lin_exp.leq(0)),
+								"int_ne" => ConstraintStore::IntLinear(lin_exp.ne(0)),
+								_ => unreachable!(),
+							},
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: match c.id.deref() {
@@ -1354,11 +1409,18 @@ where
 							"int_ne_imp" | "int_ne_reif" => lin_exp.ne(0),
 							_ => unreachable!(),
 						};
-						self.prb += match c.id.deref() {
-							"int_eq_imp" | "int_le_imp" | "int_ne_imp" => lin.implied_by(r),
-							"int_eq_reif" | "int_le_reif" | "int_ne_reif" => lin.reified_by(r),
-							_ => unreachable!(),
-						};
+						self.prb.add_constraint(
+							match c.id.deref() {
+								"int_eq_imp" | "int_le_imp" | "int_ne_imp" => {
+									ConstraintStore::IntLinear(lin.implied_by(r))
+								}
+								"int_eq_reif" | "int_le_reif" | "int_ne_reif" => {
+									ConstraintStore::IntLinear(lin.reified_by(r))
+								}
+								_ => unreachable!(),
+							},
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: match c.id.deref() {
@@ -1394,12 +1456,15 @@ where
 							.filter_map(|(x, c)| NonZeroIntVal::new(c).map(|c| x * c))
 							.sum();
 
-						self.prb += match c.id.deref() {
-							"int_lin_eq" => lin_exp.eq(rhs),
-							"int_lin_le" => lin_exp.leq(rhs),
-							"int_lin_ne" => lin_exp.ne(rhs),
-							_ => unreachable!(),
-						};
+						self.prb.add_constraint(
+							match c.id.deref() {
+								"int_lin_eq" => ConstraintStore::IntLinear(lin_exp.eq(rhs)),
+								"int_lin_le" => ConstraintStore::IntLinear(lin_exp.leq(rhs)),
+								"int_lin_ne" => ConstraintStore::IntLinear(lin_exp.ne(rhs)),
+								_ => unreachable!(),
+							},
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: match c.id.deref() {
@@ -1440,15 +1505,18 @@ where
 							"int_lin_ne_imp" | "int_lin_ne_reif" => lin_exp.ne(rhs),
 							_ => unreachable!(),
 						};
-						self.prb += match c.id.deref() {
-							"int_lin_eq_imp" | "int_lin_le_imp" | "int_lin_ne_imp" => {
-								lin.implied_by(reified)
-							}
-							"int_lin_eq_reif" | "int_lin_le_reif" | "int_lin_ne_reif" => {
-								lin.reified_by(reified)
-							}
-							_ => unreachable!(),
-						};
+						self.prb.add_constraint(
+							match c.id.deref() {
+								"int_lin_eq_imp" | "int_lin_le_imp" | "int_lin_ne_imp" => {
+									ConstraintStore::IntLinear(lin.implied_by(reified))
+								}
+								"int_lin_eq_reif" | "int_lin_le_reif" | "int_lin_ne_reif" => {
+									ConstraintStore::IntLinear(lin.reified_by(reified))
+								}
+								_ => unreachable!(),
+							},
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: match c.id.deref() {
@@ -1472,9 +1540,15 @@ where
 						let b = self.arg_int(b)?;
 						let m = self.arg_int(m)?;
 						if is_maximum {
-							self.prb += array_maximum_int(vec![a, b], m);
+							self.prb.add_constraint(
+								ConstraintStore::IntArrayMinimum(array_maximum_int(vec![a, b], m)),
+								fzn_ids,
+							);
 						} else {
-							self.prb += array_minimum_int(vec![a, b], m);
+							self.prb.add_constraint(
+								ConstraintStore::IntArrayMinimum(array_minimum_int(vec![a, b], m)),
+								fzn_ids,
+							);
 						}
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
@@ -1489,7 +1563,10 @@ where
 						let base = self.arg_int(base)?;
 						let exponent = self.arg_int(exponent)?;
 						let res = self.arg_int(res)?;
-						self.prb += pow_int(base, exponent, res);
+						self.prb.add_constraint(
+							ConstraintStore::IntPow(pow_int(base, exponent, res)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "int_pow",
@@ -1503,7 +1580,8 @@ where
 						let a = self.arg_int(x)?;
 						let b = self.arg_int(y)?;
 						let m = self.arg_int(z)?;
-						self.prb += times_int(a, b, m);
+						self.prb
+							.add_constraint(ConstraintStore::IntTimes(times_int(a, b, m)), fzn_ids);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "int_times",
@@ -1532,7 +1610,10 @@ where
 						let s = self.arg_par_set(s)?;
 						let r = self.arg_bool(r)?;
 
-						self.prb += int_in_set_reif(x, s, r);
+						self.prb.add_constraint(
+							ConstraintStore::IntInSetReif(int_in_set_reif(x, s, r)),
+							fzn_ids,
+						);
 					} else {
 						return Err(FlatZincError::InvalidNumArgs {
 							name: "set_in_reif",
@@ -1649,6 +1730,11 @@ where
 		}
 
 		let keys = unify_map.keys().sorted();
+
+		if !unify_map.is_empty() && self.prove {
+			panic!("Proof hints for unification not yet supported!")
+		}
+
 		for k in keys {
 			let li = unify_map[k].borrow();
 			if self.map.contains_key(k) {

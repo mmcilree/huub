@@ -40,10 +40,10 @@ use crate::{
 		int_var::{EncodingType, IntVar, IntVarRef},
 		queue::PriorityLevel,
 		trail::TrailedInt,
-		BoolView, BoolViewInner, IntView, IntViewInner, View,
+		BoolView, BoolViewInner, IntView, IntViewInner, ProofHint, View,
 	},
 	BoolDecision, BoolFormula, Decision, IntDecision, IntEq, IntLitMeaning, IntSetVal, IntVal,
-	Model, Solver,
+	Model, ProofID, Solver,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -180,6 +180,8 @@ pub(crate) struct ReformulationContext<'a> {
 	/// The mapping from variable in the [`crate::Model`] to the corresponding
 	/// view in the [`Solver`].
 	pub(crate) map: &'a ReformulationMap,
+	/// Proof hint for the next constraint to be added
+	pub(crate) current_proof_hint: Option<ProofHint>,
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -248,14 +250,50 @@ impl<S: SimplificationActions> Constraint<S> for BoolFormula {
 }
 
 impl ConstraintStore {
+	/// For proof hint purposes, get the constraint name as a string.
+	fn constraint_name(&self) -> String {
+		String::from(match self {
+			ConstraintStore::BoolDecisionArrayElement(_) => "BoolDecisionArrayElement",
+			ConstraintStore::BoolFormula(_) => "BoolFormula",
+			ConstraintStore::DisjunctiveStrict(_) => "DisjunctiveStrict",
+			ConstraintStore::IntAbs(_) => "IntAbs",
+			ConstraintStore::IntAllDifferent(_) => "IntAllDifferent",
+			ConstraintStore::IntArrayMinimum(_) => "IntArrayMinimum",
+			ConstraintStore::IntDecisionArrayElement(_) => "IntDecisionArrayElement",
+			ConstraintStore::IntDiv(_) => "IntDiv",
+			ConstraintStore::IntEq(_) => "IntEq",
+			ConstraintStore::IntInSetReif(_) => "IntInSetReif",
+			ConstraintStore::IntLinear(_) => "IntLinear",
+			ConstraintStore::IntPow(_) => "IntPow",
+			ConstraintStore::IntTable(_) => "IntTable",
+			ConstraintStore::IntTimes(_) => "IntTimes",
+			ConstraintStore::IntValArrayElement(_) => "IntValArrayElement",
+			ConstraintStore::Other(_) => "Other",
+		})
+	}
 	/// Map the constraint into propagators and clauses to be added to the given
 	/// solver, using the variable mapping provided.
 	pub(crate) fn to_solver<Oracle: PropagatingSolver<Engine>>(
 		&self,
 		slv: &mut Solver<Oracle>,
 		map: &ReformulationMap,
+		proof_constraint_ids: Vec<ProofID>,
 	) -> Result<(), ReformulationError> {
-		let mut actions = ReformulationContext { slv, map };
+		let proof_hint = if slv.prove() {
+			Some(ProofHint {
+				name: self.constraint_name(),
+				constraint_ids: proof_constraint_ids,
+				extra_hints: vec![],
+			})
+		} else {
+			None
+		};
+		let mut actions = ReformulationContext {
+			slv,
+			map,
+			current_proof_hint: proof_hint,
+		};
+
 		match self {
 			ConstraintStore::BoolDecisionArrayElement(con) => {
 				<BoolDecisionArrayElement as Constraint<Model>>::to_solver(con, &mut actions)
@@ -468,14 +506,26 @@ impl InspectionActions for ReformulationContext<'_> {
 }
 
 impl PropagatorInitActions for ReformulationContext<'_> {
+	fn add_propagator(&mut self, propagator: BoxedPropagator, priority: PriorityLevel) -> PropRef {
+		self.slv.add_propagator_with_proof_hint(
+			propagator,
+			priority,
+			self.current_proof_hint.clone(),
+		)
+	}
+
+	fn get_current_proof_hint(&mut self) -> Option<ProofHint> {
+		self.current_proof_hint.clone()
+	}
+
 	delegate! {
 		to self.slv {
-			fn add_propagator(&mut self, propagator: BoxedPropagator, priority: PriorityLevel) -> PropRef;
+			fn add_propagator_with_proof_hint(&mut self, propagator: BoxedPropagator, priority: PriorityLevel, proof_hint: Option<ProofHint>) -> PropRef;
 			fn new_trailed_int(&mut self, init: IntVal) -> TrailedInt;
 			fn enqueue_now(&mut self, prop: PropRef);
 			fn enqueue_on_bool_change(&mut self, prop: PropRef, var: BoolView);
 			fn enqueue_on_int_change(&mut self, prop: PropRef, var: IntView, condition: IntPropCond);
-			fn add_clause_from_slice_with_proof_hint(&mut self,clause: &[RawLit],proof_hint: Option<&str>) -> Result<(),ReformulationError>;
+			fn add_clause_from_slice_with_proof_hint(&mut self,clause: &[RawLit], proof_hint: Option<ProofHint>) -> Result<(),ReformulationError>;
 		}
 	}
 }

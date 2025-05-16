@@ -44,7 +44,7 @@ impl<S: SimplificationActions> Constraint<S> for BoolDecisionArrayElement {
 	fn to_solver(&self, slv: &mut dyn ReformulationActions) -> Result<(), ReformulationError> {
 		let result = slv.get_solver_bool(self.result);
 		let index = slv.get_solver_int(self.index);
-
+		let proof_hint = slv.get_current_proof_hint();
 		// Evaluate result literal
 		let arr: Vec<_> = self.array.iter().map(|&v| slv.get_solver_bool(v)).collect();
 
@@ -52,21 +52,18 @@ impl<S: SimplificationActions> Constraint<S> for BoolDecisionArrayElement {
 			// Evaluate array literal
 			let idx_eq = slv.get_int_lit(index, IntLitMeaning::Eq(i as IntVal));
 			// add clause (idx = i + 1 /\ arr[i]) => val
-			slv.add_clause_with_proof_hint([!idx_eq, !l, result], Some(":: bool_array_element"))?;
+			slv.add_clause_with_proof_hint([!idx_eq, !l, result], proof_hint.clone())?;
 			// add clause (idx = i + 1 /\ !arr[i]) => !val
-			slv.add_clause_with_proof_hint([!idx_eq, l, !result], Some(":: bool_array_element"))?;
+			slv.add_clause_with_proof_hint([!idx_eq, l, !result], proof_hint.clone())?;
 		}
 
 		// add clause (arr[1] /\ arr[2] /\ ... /\ arr[n]) => val
 		slv.add_clause_with_proof_hint(
 			arr.iter().map(|&l| !l).chain(once(result)),
-			Some(":: bool_array_element"),
+			proof_hint.clone(),
 		)?;
 		// add clause (!arr[1] /\ !arr[2] /\ ... /\ !arr[n]) => !val
-		slv.add_clause_with_proof_hint(
-			arr.into_iter().chain(once(!result)),
-			Some(":: bool_array_element"),
-		)?;
+		slv.add_clause_with_proof_hint(arr.into_iter().chain(once(!result)), proof_hint.clone())?;
 		Ok(())
 	}
 }

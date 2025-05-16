@@ -33,7 +33,7 @@ use crate::{
 	solver::{
 		engine::{PropRef, State},
 		solving_context::SolvingContext,
-		BoolView, BoolViewInner,
+		BoolView, BoolViewInner, ProofHint,
 	},
 	Conjunction, Model,
 };
@@ -67,8 +67,6 @@ pub struct Conflict {
 	/// The reason for the conflict
 	/// This reason must result a conjunction that implies false
 	pub(crate) reason: Reason,
-
-	pub(crate) proof_hint: Option<String>,
 }
 
 /// A trait for constraints that can be placed in a [`Model`] object.
@@ -266,20 +264,14 @@ impl Conflict {
 		actions: &mut A,
 		subject: Option<RawLit>,
 		reason: impl ReasonBuilder<A>,
-		proof_hint: Option<String>,
 	) -> Self {
 		match reason.build_reason(actions) {
-			Ok(reason) => Self {
-				subject,
-				reason,
-				proof_hint,
-			},
+			Ok(reason) => Self { subject, reason },
 			Err(true) => {
 				if let Some(subject) = subject {
 					Self {
 						subject: None,
 						reason: Reason::Simple(!subject),
-						proof_hint: proof_hint,
 					}
 				} else {
 					panic!("constructing empty conflict")
@@ -334,13 +326,13 @@ impl Reason {
 	/// When the `lit` argument is `None`, the reason is explaining `false`.
 	pub(crate) fn explain<Clause: FromIterator<RawLit>>(
 		&self,
-		props: &mut IndexVec<PropRef, BoxedPropagator>,
+		props: &mut IndexVec<PropRef, (BoxedPropagator, Option<ProofHint>)>,
 		actions: &mut State,
 		lit: Option<RawLit>,
 	) -> Clause {
 		match self {
 			Reason::Lazy(LazyReason(prop, data)) => {
-				let reason = props[*prop].explain(actions, lit, *data);
+				let reason = props[*prop].0.explain(actions, lit, *data);
 				reason.into_iter().map(|l| !l).chain(lit).collect()
 			}
 			Reason::Eager(v) => v.iter().map(|&l| !l).chain(lit).collect(),

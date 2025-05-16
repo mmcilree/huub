@@ -23,6 +23,8 @@ use crate::{
 	Clause, IntLitMeaning, IntVal,
 };
 
+use super::ProofHint;
+
 /// Type used to communicate whether a change is redundant, conflicting, or new.
 enum ChangeType {
 	/// Change is redundant, no action needs to be taken.
@@ -49,6 +51,8 @@ pub struct SolvingContext<'a> {
 	pub(crate) state: &'a mut State,
 	/// Current propagator being executed
 	pub(crate) current_prop: PropRef,
+	/// Proof hint for the current propagator being executed
+	pub(crate) current_proof_hint: Option<ProofHint>,
 }
 
 impl<'a> SolvingContext<'a> {
@@ -76,6 +80,7 @@ impl<'a> SolvingContext<'a> {
 			slv,
 			state,
 			current_prop: PropRef::new(u32::MAX as usize),
+			current_proof_hint: None,
 		}
 	}
 
@@ -87,46 +92,19 @@ impl<'a> SolvingContext<'a> {
 		lit: RawLit,
 		lit_req: IntLitMeaning,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		let bv = BoolView(BoolViewInner::Lit(lit));
+
 		match lit_req {
 			IntLitMeaning::Eq(0) | IntLitMeaning::Less(1) | IntLitMeaning::NotEq(1) => {
-				self.set_bool_with_proof_hint(!bv, reason, proof_hint)
+				self.set_bool(!bv, reason)
 			}
 			IntLitMeaning::Eq(1) | IntLitMeaning::GreaterEq(1) | IntLitMeaning::NotEq(0) => {
-				self.set_bool_with_proof_hint(bv, reason, proof_hint)
+				self.set_bool(bv, reason)
 			}
-			IntLitMeaning::Eq(_) => Err(Conflict::new(
-				self,
-				None,
-				reason,
-				if self.state.prove {
-					proof_hint.map(str::to_owned)
-				} else {
-					None
-				},
-			)),
-			IntLitMeaning::GreaterEq(i) if i > 1 => Err(Conflict::new(
-				self,
-				None,
-				reason,
-				if self.state.prove {
-					proof_hint.map(str::to_owned)
-				} else {
-					None
-				},
-			)),
-			IntLitMeaning::Less(i) if i <= 0 => Err(Conflict::new(
-				self,
-				None,
-				reason,
-				if self.state.prove {
-					proof_hint.map(str::to_owned)
-				} else {
-					None
-				},
-			)),
+			IntLitMeaning::Eq(_) => Err(Conflict::new(self, None, reason)),
+			IntLitMeaning::GreaterEq(i) if i > 1 => Err(Conflict::new(self, None, reason)),
+			IntLitMeaning::Less(i) if i <= 0 => Err(Conflict::new(self, None, reason)),
 			IntLitMeaning::NotEq(_) | IntLitMeaning::GreaterEq(_) | IntLitMeaning::Less(_) => {
 				Ok(())
 			}
@@ -141,7 +119,6 @@ impl<'a> SolvingContext<'a> {
 		iv: IntVarRef,
 		lit_req: IntLitMeaning,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		match self.check_change(iv, &lit_req) {
 			ChangeType::Redundant => Ok(()),
@@ -154,48 +131,39 @@ impl<'a> SolvingContext<'a> {
 						None
 					}
 				};
-				Err(Conflict::new(
-					self,
-					lit,
-					reason,
-					if self.state.prove {
-						proof_hint.map(str::to_owned)
-					} else {
-						None
-					},
-				))
+				Err(Conflict::new(self, lit, reason))
 			}
 			ChangeType::New => {
 				let bv = self.get_intref_lit(iv, lit_req.clone());
-				self.set_bool_with_proof_hint(bv, reason, proof_hint)
+				self.set_bool(bv, reason)
 			}
 		}
 	}
 
 	/// Run the propagators in the queue until a propagator detects a conflict,
 	/// returns literals to be propagated by the SAT oracle, or the queue is empty.
-	pub(crate) fn run_propagators(&mut self, propagators: &mut IndexVec<PropRef, BoxedPropagator>) {
+	pub(crate) fn run_propagators(
+		&mut self,
+		propagators: &mut IndexVec<PropRef, (BoxedPropagator, Option<ProofHint>)>,
+	) {
 		while let Some(p) = self.state.propagator_queue.pop() {
 			debug_assert!(!self.state.failed);
 			debug_assert!(self.state.conflict.is_none());
 			self.current_prop = p;
-			let prop = propagators[p].as_mut();
+			self.current_proof_hint = propagators[p].1.clone();
+			let prop = propagators[p].0.as_mut();
 			let res = prop.propagate(self);
+
 			self.state.statistics.propagations += 1;
 			self.current_prop = PropRef::new(u32::MAX as usize);
-			if let Err(Conflict {
-				subject,
-				reason,
-				proof_hint,
-			}) = res
-			{
+			if let Err(Conflict { subject, reason }) = res {
 				let clause: Clause = reason.explain(propagators, self.state, subject);
 				trace!(clause = ?clause.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "conflict detected");
 				debug_assert!(!clause.is_empty());
 				debug_assert!(self.state.conflict.is_none());
 				self.state.failed = true;
 				self.state.conflict = Some(clause);
-				self.state.conflict_proof_hint = proof_hint;
+				self.state.conflict_proof_hint = self.current_proof_hint.clone();
 			}
 			if self.state.conflict.is_some() || !self.state.propagation_queue.is_empty() {
 				return;
@@ -233,7 +201,11 @@ impl DecisionActions for SolvingContext<'_> {
 				self.state.clauses.push_back((
 					cl,
 					if self.state.prove {
-						Some(" :: get_intref_lit".to_string())
+						Some(ProofHint {
+							constraint_ids: vec![],
+							name: "LazyLitDef".to_string(),
+							extra_hints: vec![],
+						})
 					} else {
 						None
 					},
@@ -283,53 +255,31 @@ impl PropagationActions for SolvingContext<'_> {
 		LazyReason(self.current_prop, data)
 	}
 
-	fn set_bool_with_proof_hint(
-		&mut self,
-		bv: BoolView,
-		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
-	) -> Result<(), Conflict> {
+	fn set_bool(&mut self, bv: BoolView, reason: impl ReasonBuilder<Self>) -> Result<(), Conflict> {
 		match bv.0 {
 			BoolViewInner::Lit(lit) => match self.state.trail.get_sat_value(lit) {
 				Some(true) => Ok(()),
-				Some(false) => Err(Conflict::new(
-					self,
-					Some(lit),
-					reason,
-					if self.state.prove {
-						proof_hint.map(str::to_owned)
-					} else {
-						None
-					},
-				)),
+				Some(false) => Err(Conflict::new(self, Some(lit), reason)),
 				None => {
 					let reason = reason.build_reason(self);
 					trace!(lit = i32::from(lit), reason = ?reason, "propagate bool");
-					self.state.register_reason(lit, reason, proof_hint);
+
+					self.state
+						.register_reason(lit, reason, self.current_proof_hint.clone());
 					self.state.propagation_queue.push_back(lit);
 					Ok(())
 				}
 			},
-			BoolViewInner::Const(false) => Err(Conflict::new(
-				self,
-				None,
-				reason,
-				if self.state.prove {
-					proof_hint.map(str::to_owned)
-				} else {
-					None
-				},
-			)),
+			BoolViewInner::Const(false) => Err(Conflict::new(self, None, reason)),
 			BoolViewInner::Const(true) => Ok(()),
 		}
 	}
 
-	fn set_int_lower_bound_with_proof_hint(
+	fn set_int_lower_bound(
 		&mut self,
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		let mut lit_req = IntLitMeaning::GreaterEq(val);
 		if let IntViewInner::Linear { transformer, .. } | IntViewInner::Bool { transformer, .. } =
@@ -340,35 +290,23 @@ impl PropagationActions for SolvingContext<'_> {
 
 		match var.0 {
 			IntViewInner::VarRef(iv) | IntViewInner::Linear { var: iv, .. } => {
-				self.propagate_int(iv, lit_req, reason, proof_hint)
+				self.propagate_int(iv, lit_req, reason)
 			}
-			IntViewInner::Bool { lit, .. } => {
-				self.propagate_bool_lin(lit, lit_req, reason, proof_hint)
-			}
+			IntViewInner::Bool { lit, .. } => self.propagate_bool_lin(lit, lit_req, reason),
 			IntViewInner::Const(i) => {
 				if i < val {
-					Err(Conflict::new(
-						self,
-						None,
-						reason,
-						if self.state.prove {
-							proof_hint.map(str::to_owned)
-						} else {
-							None
-						},
-					))
+					Err(Conflict::new(self, None, reason))
 				} else {
 					Ok(())
 				}
 			}
 		}
 	}
-	fn set_int_not_eq_with_proof_hint(
+	fn set_int_not_eq(
 		&mut self,
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		let mut lit_req = IntLitMeaning::NotEq(val);
 		if let IntViewInner::Linear { transformer, .. } | IntViewInner::Bool { transformer, .. } =
@@ -385,35 +323,23 @@ impl PropagationActions for SolvingContext<'_> {
 
 		match var.0 {
 			IntViewInner::VarRef(iv) | IntViewInner::Linear { var: iv, .. } => {
-				self.propagate_int(iv, lit_req, reason, proof_hint)
+				self.propagate_int(iv, lit_req, reason)
 			}
-			IntViewInner::Bool { lit, .. } => {
-				self.propagate_bool_lin(lit, lit_req, reason, proof_hint)
-			}
+			IntViewInner::Bool { lit, .. } => self.propagate_bool_lin(lit, lit_req, reason),
 			IntViewInner::Const(i) => {
 				if i == val {
-					Err(Conflict::new(
-						self,
-						None,
-						reason,
-						if self.state.prove {
-							proof_hint.map(str::to_owned)
-						} else {
-							None
-						},
-					))
+					Err(Conflict::new(self, None, reason))
 				} else {
 					Ok(())
 				}
 			}
 		}
 	}
-	fn set_int_upper_bound_with_proof_hint(
+	fn set_int_upper_bound(
 		&mut self,
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		let mut lit_req = IntLitMeaning::Less(val + 1);
 		if let IntViewInner::Linear { transformer, .. } | IntViewInner::Bool { transformer, .. } =
@@ -424,35 +350,23 @@ impl PropagationActions for SolvingContext<'_> {
 
 		match var.0 {
 			IntViewInner::VarRef(iv) | IntViewInner::Linear { var: iv, .. } => {
-				self.propagate_int(iv, lit_req, reason, proof_hint)
+				self.propagate_int(iv, lit_req, reason)
 			}
-			IntViewInner::Bool { lit, .. } => {
-				self.propagate_bool_lin(lit, lit_req, reason, proof_hint)
-			}
+			IntViewInner::Bool { lit, .. } => self.propagate_bool_lin(lit, lit_req, reason),
 			IntViewInner::Const(i) => {
 				if i > val {
-					Err(Conflict::new(
-						self,
-						None,
-						reason,
-						if self.state.prove {
-							proof_hint.map(str::to_owned)
-						} else {
-							None
-						},
-					))
+					Err(Conflict::new(self, None, reason))
 				} else {
 					Ok(())
 				}
 			}
 		}
 	}
-	fn set_int_val_with_proof_hint(
+	fn set_int_val(
 		&mut self,
 		var: IntView,
 		val: IntVal,
 		reason: impl ReasonBuilder<Self>,
-		proof_hint: Option<&str>,
 	) -> Result<(), Conflict> {
 		let mut lit_req = IntLitMeaning::Eq(val);
 		if let IntViewInner::Linear { transformer, .. } | IntViewInner::Bool { transformer, .. } =
@@ -462,39 +376,19 @@ impl PropagationActions for SolvingContext<'_> {
 				Ok(lit) => lit_req = lit,
 				Err(v) => {
 					debug_assert!(!v);
-					return Err(Conflict::new(
-						self,
-						None,
-						reason,
-						if self.state.prove {
-							proof_hint.map(str::to_owned)
-						} else {
-							None
-						},
-					));
+					return Err(Conflict::new(self, None, reason));
 				}
 			}
 		}
 
 		match var.0 {
 			IntViewInner::VarRef(iv) | IntViewInner::Linear { var: iv, .. } => {
-				self.propagate_int(iv, lit_req, reason, proof_hint)
+				self.propagate_int(iv, lit_req, reason)
 			}
-			IntViewInner::Bool { lit, .. } => {
-				self.propagate_bool_lin(lit, lit_req, reason, proof_hint)
-			}
+			IntViewInner::Bool { lit, .. } => self.propagate_bool_lin(lit, lit_req, reason),
 			IntViewInner::Const(i) => {
 				if i != val {
-					Err(Conflict::new(
-						self,
-						None,
-						reason,
-						if self.state.prove {
-							proof_hint.map(str::to_owned)
-						} else {
-							None
-						},
-					))
+					Err(Conflict::new(self, None, reason))
 				} else {
 					Ok(())
 				}

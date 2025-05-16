@@ -51,11 +51,13 @@ use crate::{
 	Clause, IntVal,
 };
 
+use super::ProofHint;
+
 #[derive(Debug, Default, Clone)]
 /// A propagation engine implementing the [`Propagator`] trait.
 pub struct Engine {
 	/// Storage of the propagators.
-	pub(crate) propagators: IndexVec<PropRef, BoxedPropagator>,
+	pub(crate) propagators: IndexVec<PropRef, (BoxedPropagator, Option<ProofHint>)>,
 	/// Storage of the branchers.
 	pub(crate) branchers: Vec<BoxedBrancher>,
 	/// Internal State representation of the propagation engine.
@@ -101,11 +103,11 @@ pub struct State {
 	/// Literals to be propagated by the oracle
 	pub(crate) propagation_queue: VecDeque<RawLit>,
 	/// Reasons for setting values (with optional proof hints)
-	pub(crate) reason_map: HashMap<RawLit, (Reason, Option<String>)>,
+	pub(crate) reason_map: HashMap<RawLit, (Reason, Option<ProofHint>)>,
 	/// Whether conflict has (already) been detected
 	pub(crate) conflict: Option<Clause>,
-	/// Optional proof hint for the conflict
-	pub(crate) conflict_proof_hint: Option<String>,
+	/// An optional proof hint to be logged with the current conflict
+	pub(crate) conflict_proof_hint: Option<ProofHint>,
 
 	/// Whether the solver is in a failure state.
 	///
@@ -117,7 +119,7 @@ pub struct State {
 
 	// ---- Non-Trailed Infrastructure ----
 	/// Storage for clauses to be communicated to the solver
-	pub(crate) clauses: VecDeque<(Clause, Option<String>)>,
+	pub(crate) clauses: VecDeque<(Clause, Option<ProofHint>)>,
 	/// Solving statistics
 	pub(crate) statistics: EngineStatistics,
 	/// Whether VSIDS is currently enabled
@@ -149,7 +151,7 @@ impl PropagatorExtension for Engine {
 			let (clause, proof_hint) = self.state.clauses.pop_front().unwrap(); // Known to be `Some`
 			if self.state.prove {
 				if let Some(proof_hint) = proof_hint {
-					slv.add_proof_hint(proof_hint.as_str());
+					slv.add_proof_hint(&proof_hint.to_string());
 				} else {
 					slv.add_proof_hint(" :: unknown_external_clause");
 				}
@@ -162,7 +164,7 @@ impl PropagatorExtension for Engine {
 			debug!(clause = ?conflict.iter().map(|&x| i32::from(x)).collect::<Vec<i32>>(), "add conflict clause");
 			if self.state.prove {
 				if let Some(proof_hint) = self.state.conflict_proof_hint.as_ref() {
-					slv.add_proof_hint(proof_hint.as_str());
+					slv.add_proof_hint(&proof_hint.to_string());
 				} else {
 					slv.add_proof_hint(" :: unknown_conflict_clause");
 				}
@@ -186,7 +188,7 @@ impl PropagatorExtension for Engine {
 			// Add a proof hint if we are proof logging and there is one
 			if self.state.prove {
 				if let Some(proof_hint) = proof_hint {
-					slv.add_proof_hint(proof_hint.as_str());
+					slv.add_proof_hint(&proof_hint.to_string());
 				} else {
 					slv.add_proof_hint(" :: unknown_reason_clause");
 				}
@@ -590,14 +592,12 @@ impl State {
 		&mut self,
 		lit: RawLit,
 		built_reason: Result<Reason, bool>,
-		proof_hint: Option<&str>,
+		proof_hint: Option<ProofHint>,
 	) {
 		match built_reason {
 			Ok(reason) => {
 				// Insert new reason, possibly overwriting old one (from previous search attempt)
-				let _ = self
-					.reason_map
-					.insert(lit, (reason, proof_hint.map(str::to_owned)));
+				let _ = self.reason_map.insert(lit, (reason, proof_hint));
 			}
 			Err(true) => {
 				// No (previous) reason required

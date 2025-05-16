@@ -147,6 +147,23 @@ pub(crate) enum IntViewInner {
 /// Note that this checker will always return false.
 pub(crate) struct NoAssumptions;
 
+/// Use unsigned ints as proof IDs for now.
+pub(crate) type ProofID = u32;
+
+/// A store of information that should be logged to the proof along
+/// with each externally added clause.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProofHint {
+	/// The IDs of "original" model constraints associated with this clause
+	pub constraint_ids: Vec<ProofID>,
+	/// A name describing who is responsible for this clause (e.g. a propagator, an
+	/// encoding, objective bound update)
+	pub name: String,
+	/// Arbitrary key value pairs that might also be useful sometimes for efficient logging
+	/// (not yet used anywhere)
+	pub extra_hints: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 /// Structure capturing statitical information about the search performed by the
 /// solver instance.
@@ -534,6 +551,26 @@ impl AssumptionChecker for NoAssumptions {
 	}
 }
 
+impl Display for ProofHint {
+	/// Currently formatting hints according to the proposed VeriPB
+	/// annotated assertion syntax.
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, " : ")?;
+		for id in self.constraint_ids.iter() {
+			write!(f, "@f{id} ")?
+		}
+		write!(f, ": {}", self.name)?;
+		if !self.extra_hints.is_empty() {
+			for (key, value) in self.extra_hints.iter() {
+				write!(f, "{key} = {value}")?
+			}
+			write!(f, ";")
+		} else {
+			write!(f, "")
+		}
+	}
+}
+
 impl SearchStatistics {
 	/// Returns the number of conflicts encountered during the search.
 	pub fn conflicts(&self) -> u64 {
@@ -815,7 +852,8 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 		Solver<Oracle>: for<'a> From<&'a Cnf>,
 		Oracle::Slv: 'static,
 	{
-		let (mut prb, map, fzn_stats) = Model::from_fzn::<S, Vec<_>>(fzn)?;
+		let (mut prb, map, fzn_stats) =
+			Model::from_fzn::<S, Vec<_>>(fzn, config.proof_path().is_some())?;
 		let (mut slv, remap) = prb.to_solver(config)?;
 		let map = map
 			.into_iter()
@@ -938,6 +976,11 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 			}
 			SatSolveResult::Unknown => SolveResult::Unknown,
 		}
+	}
+
+	/// Get whether proof logging is enabled in the underlying solver.
+	pub fn prove(&mut self) -> bool {
+		self.engine_mut().state.prove
 	}
 
 	delegate! {
@@ -1089,8 +1132,17 @@ impl<Oracle: PropagatingSolver<Engine>> InspectionActions for Solver<Oracle> {
 
 impl<Oracle: PropagatingSolver<Engine>> PropagatorInitActions for Solver<Oracle> {
 	fn add_propagator(&mut self, propagator: BoxedPropagator, priority: PriorityLevel) -> PropRef {
+		self.add_propagator_with_proof_hint(propagator, priority, None)
+	}
+
+	fn add_propagator_with_proof_hint(
+		&mut self,
+		propagator: BoxedPropagator,
+		priority: PriorityLevel,
+		proof_hint: Option<ProofHint>,
+	) -> PropRef {
 		let engine = self.engine_mut();
-		let prop_ref = engine.propagators.push(propagator);
+		let prop_ref = engine.propagators.push((propagator, proof_hint));
 		let p = engine.state.propagator_queue.info.push(PropagatorInfo {
 			enqueued: false,
 			priority,
@@ -1150,12 +1202,12 @@ impl<Oracle: PropagatingSolver<Engine>> PropagatorInitActions for Solver<Oracle>
 	fn add_clause_from_slice_with_proof_hint(
 		&mut self,
 		clause: &[RawLit],
-		proof_hint: Option<&str>,
+		proof_hint: Option<ProofHint>,
 	) -> Result<(), ReformulationError> {
 		let (oracle, engine) = self.oracle.access_solving();
 		if engine.state.prove {
 			if let Some(hint) = proof_hint {
-				oracle.add_proof_hint(hint);
+				oracle.add_proof_hint(&hint.to_string());
 			}
 		}
 		self.oracle

@@ -43,7 +43,7 @@ use huub::{
 	actions::{DecisionActions, PropagatorInitActionsTools},
 	flatzinc::{FlatZincError, FlatZincStatistics},
 	reformulate::{InitConfig, ReformulationError},
-	solver::{Goal, IntLitMeaning, SolveResult, Solver, Valuation, Value, View},
+	solver::{Goal, IntLitMeaning, ProofHint, SolveResult, Solver, Valuation, Value, View},
 	SlvTermSignal,
 };
 use pico_args::Arguments;
@@ -312,7 +312,6 @@ where
 			slv.set_vsids_only(self.vsids_only);
 			slv.set_toggle_vsids(self.toggle_vsids);
 			slv.set_vsids_after(self.vsids_after);
-			slv.set_prove(self.prove);
 		}
 
 		// Determine Goal and Objective
@@ -466,7 +465,16 @@ where
 						unreachable!()
 					};
 					let obj_lit = slv.get_int_lit(obj, IntLitMeaning::Eq(obj_val));
-					slv.add_clause_with_proof_hint([obj_lit], Some(":: obj_lit"))
+					let proof_hint = if slv.prove() {
+						Some(ProofHint {
+							name: "soli".to_string(),
+							constraint_ids: vec![],
+							extra_hints: vec![],
+						})
+					} else {
+						None
+					};
+					slv.add_clause_with_proof_hint([obj_lit], proof_hint.clone())
 						.unwrap();
 					// Ensure all following solutions are different from the first optimal
 					// solution
