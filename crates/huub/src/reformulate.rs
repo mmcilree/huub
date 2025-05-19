@@ -251,8 +251,8 @@ impl<S: SimplificationActions> Constraint<S> for BoolFormula {
 
 impl ConstraintStore {
 	/// For proof hint purposes, get the constraint name as a string.
-	fn constraint_name(&self) -> String {
-		String::from(match self {
+	fn constraint_name(&self) -> &'static str {
+		match self {
 			ConstraintStore::BoolDecisionArrayElement(_) => "BoolDecisionArrayElement",
 			ConstraintStore::BoolFormula(_) => "BoolFormula",
 			ConstraintStore::DisjunctiveStrict(_) => "DisjunctiveStrict",
@@ -269,7 +269,7 @@ impl ConstraintStore {
 			ConstraintStore::IntTimes(_) => "IntTimes",
 			ConstraintStore::IntValArrayElement(_) => "IntValArrayElement",
 			ConstraintStore::Other(_) => "Other",
-		})
+		}
 	}
 	/// Map the constraint into propagators and clauses to be added to the given
 	/// solver, using the variable mapping provided.

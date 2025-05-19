@@ -467,7 +467,7 @@ where
 					let obj_lit = slv.get_int_lit(obj, IntLitMeaning::Eq(obj_val));
 					let proof_hint = if slv.prove() {
 						Some(ProofHint {
-							name: "soli".to_string(),
+							name: "soli",
 							constraint_ids: vec![],
 							extra_hints: vec![],
 						})

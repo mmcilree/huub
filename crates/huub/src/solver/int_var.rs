@@ -691,7 +691,7 @@ impl IntVar {
 			for (ord_i, ord_j) in (*storage).tuple_windows() {
 				let proof_hint = if slv.prove() {
 					Some(ProofHint {
-						name: "IntVarDef".to_string(),
+						name: "IntVarDef",
 						constraint_ids: vec![],
 						extra_hints: vec![],
 					})

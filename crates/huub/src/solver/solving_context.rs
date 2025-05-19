@@ -203,7 +203,7 @@ impl DecisionActions for SolvingContext<'_> {
 					if self.state.prove {
 						Some(ProofHint {
 							constraint_ids: vec![],
-							name: "LazyLitDef".to_string(),
+							name: "LazyLitDef",
 							extra_hints: vec![],
 						})
 					} else {

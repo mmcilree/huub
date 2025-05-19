@@ -33,7 +33,7 @@ use tracing::{debug, trace};
 use crate::{
 	actions::{
 		BrancherInitActions, DecisionActions, ExplanationActions, InspectionActions,
-		PropagatorInitActions, TrailingActions,
+		PropagatorInitActions, PropagatorInitActionsTools, TrailingActions,
 	},
 	branchers::BoxedBrancher,
 	constraints::BoxedPropagator,
@@ -157,8 +157,8 @@ pub struct ProofHint {
 	/// The IDs of "original" model constraints associated with this clause
 	pub constraint_ids: Vec<ProofID>,
 	/// A name describing who is responsible for this clause (e.g. a propagator, an
-	/// encoding, objective bound update)
-	pub name: String,
+	/// encoding, objective bound update)å
+	pub name: &'static str,
 	/// Arbitrary key value pairs that might also be useful sometimes for efficient logging
 	/// (not yet used anywhere)
 	pub extra_hints: Vec<(String, String)>,
@@ -810,7 +810,17 @@ impl<Oracle: PropagatingSolver<Engine>> Solver<Oracle> {
 							}),
 							"add objective bound"
 						);
-						self.add_clause([bound_lit.unwrap()]).unwrap();
+						let proof_hint = if self.prove() {
+							Some(ProofHint {
+								name: "soli",
+								constraint_ids: vec![],
+								extra_hints: vec![],
+							})
+						} else {
+							None
+						};
+						self.add_clause_with_proof_hint([bound_lit.unwrap()], proof_hint)
+							.unwrap();
 					}
 				}
 				Unsatisfiable => {
