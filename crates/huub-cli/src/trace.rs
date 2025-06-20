@@ -1,5 +1,5 @@
 //! Module that contains the implementation of a custom [`tracing::Subscriber`]
-//! for `fzn-huub`.
+//! for `huub`.
 
 use std::{
 	collections::HashMap,
@@ -97,7 +97,7 @@ struct RegisterLazyLits {
 	lit_reverse_map: Arc<Mutex<HashMap<LitInt, LitName>>>,
 }
 
-/// Create a [`tracing_subscriber::Subscriber`] specialized for `fzn-huub`.
+/// Create a [`tracing_subscriber::Subscriber`] specialized for `huub`.
 ///
 /// The given subscriber additionally formats literals and integer variables
 /// using the name mapping provided by `lit_reverse_map` and `int_reverse_map`.
@@ -216,7 +216,11 @@ impl<V: Visit> LitNames<'_, V> {
 	/// Check if the field should and can be formatted as a clause or a list of
 	/// literals.
 	fn check_clause(&mut self, field: &Field, value: &dyn fmt::Debug) -> bool {
-		if field.name().starts_with("clause") || field.name().starts_with("lits") {
+		if field.name().starts_with("clause")
+			|| field.name().starts_with("conj")
+			|| field.name().starts_with("lits")
+			|| field.name().starts_with("reason")
+		{
 			let res: Result<Vec<i32>, _> = serde_json::from_str(&format!("{:?}", value));
 			if let Ok(clause) = res {
 				let mut v: Vec<String> = Vec::with_capacity(clause.len());
@@ -227,11 +231,17 @@ impl<V: Visit> LitNames<'_, V> {
 						v.push(format!("Lit({})", i));
 					}
 				}
-				if field.name().starts_with("clause") {
-					self.inner.record_str(field, &v.join(" ∨ "));
-				} else {
-					self.inner.record_str(field, &v.join(", "));
-				}
+				self.inner.record_str(
+					field,
+					&v.join(if field.name().starts_with("clause") {
+						" ∨ "
+					} else if field.name().starts_with("conj") || field.name().starts_with("reason")
+					{
+						" ∧ "
+					} else {
+						", "
+					}),
+				);
 				return true;
 			}
 		}

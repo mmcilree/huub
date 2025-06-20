@@ -31,6 +31,7 @@ use crate::{
 		int_pow::IntPow,
 		int_table::IntTable,
 		int_times::IntTimes,
+		int_value_precede::{IntSeqPrecedeChain, IntValuePrecedeChain},
 		BoxedConstraint, BoxedPropagator, Constraint, SimplificationStatus,
 	},
 	helpers::linear_transform::LinearTransform,
@@ -103,9 +104,11 @@ pub(crate) enum ConstraintStore {
 	IntInSetReif(IntInSetReif),
 	IntLinear(IntLinear),
 	IntPow(IntPow),
+	IntSeqPrecedeChain(IntSeqPrecedeChain),
 	IntTable(IntTable),
 	IntTimes(IntTimes),
 	IntValArrayElement(IntValArrayElement),
+	IntValuePrecedeChain(IntValuePrecedeChain),
 	Other(BoxedConstraint),
 }
 
@@ -269,6 +272,8 @@ impl ConstraintStore {
 			ConstraintStore::IntTimes(_) => "IntTimes",
 			ConstraintStore::IntValArrayElement(_) => "IntValArrayElement",
 			ConstraintStore::Other(_) => "Other",
+			ConstraintStore::IntSeqPrecedeChain(_) => "IntSeqPrecedeChain",
+			ConstraintStore::IntValuePrecedeChain(_) => "IntSeqPrecedeChain",
 		}
 	}
 	/// Map the constraint into propagators and clauses to be added to the given
@@ -331,6 +336,9 @@ impl ConstraintStore {
 			ConstraintStore::IntPow(con) => {
 				<IntPow as Constraint<Model>>::to_solver(con, &mut actions)
 			}
+			ConstraintStore::IntSeqPrecedeChain(con) => {
+				<IntSeqPrecedeChain as Constraint<Model>>::to_solver(con, &mut actions)
+			}
 			ConstraintStore::IntTable(con) => {
 				<IntTable as Constraint<Model>>::to_solver(con, &mut actions)
 			}
@@ -339,6 +347,9 @@ impl ConstraintStore {
 			}
 			ConstraintStore::IntValArrayElement(con) => {
 				<IntValArrayElement as Constraint<Model>>::to_solver(con, &mut actions)
+			}
+			ConstraintStore::IntValuePrecedeChain(con) => {
+				<IntValuePrecedeChain as Constraint<Model>>::to_solver(con, &mut actions)
 			}
 			ConstraintStore::Other(con) => con.to_solver(&mut actions),
 		}
@@ -692,6 +703,7 @@ impl ReformulationMapBuilder {
 			}
 		}
 	}
+
 	/// Get the representation of a Integer decision variable in the [`Solver`] or
 	/// create it if it does not yet exist.
 	///
