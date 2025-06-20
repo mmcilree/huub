@@ -583,7 +583,7 @@ where
 
 						let record = match value {
 							LitName::BoolVar(name, _cond) => {
-								json!({"cpvartype": "boolvar", "name": name.to_string()})
+								json!({"cpvartype": "boolvar", "type": "boolvar", "name": name.to_string()})
 							}
 							LitName::IntLit(index, meaning) => {
 								let var_name_str = if int_map_guard.len() > *index {
